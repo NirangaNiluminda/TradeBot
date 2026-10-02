@@ -140,8 +140,14 @@ class LiveTrader:
         while self.control.state.keeps_running:
             try:
                 await job()
-            except Exception:
-                log.exception("Error in %s (will retry)", getattr(job, "__name__", job))
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                log.warning("Network problem in %s (will retry): %s", _name(job), exc)
+            except Exception as exc:
+                if _looks_like_network_error(exc):  # e.g. ccxt ExchangeNotAvailable
+                    log.warning("Exchange unavailable in %s (will retry): %s",
+                                _name(job), str(exc).splitlines()[0][:120])  # fmt: skip
+                else:
+                    log.exception("Error in %s (will retry)", _name(job))
             await self._sleep(seconds)
 
     async def _sleep(self, seconds: float) -> None:
@@ -204,3 +210,18 @@ class LiveTrader:
         for symbol in self.symbols:
             self.engine.last_price[symbol] = await self.market_data.fetch_last_price(symbol)
         await self.engine.sync_exits()
+
+
+def _name(job: object) -> str:
+    return getattr(job, "__name__", str(job))
+
+
+def _looks_like_network_error(exc: Exception) -> bool:
+    """Exchange outages (HTTP 5xx, timeouts) shouldn't print scary tracebacks.
+
+    Checked by class name so this layer doesn't depend on ccxt.
+    """
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    return bool(
+        names & {"NetworkError", "ExchangeNotAvailable", "RequestTimeout", "DDoSProtection"}
+    )
