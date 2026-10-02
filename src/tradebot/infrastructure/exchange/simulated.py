@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from tradebot.domain.models import Candle, ExitReason, Fill, Side, SymbolRules
+from tradebot.domain.models import Candle, ExitReason, Fill, Position, Side, SymbolRules
 from tradebot.domain.ports import OrderRejected
 
 _EPS = 1e-9
@@ -110,8 +110,14 @@ class SimulatedExchange:
 
     async def place_exit_orders(
         self, symbol: str, amount: float, stop_loss: float, take_profit: float
-    ) -> None:
+    ) -> str:
         self._exits[symbol] = _ExitOrder(amount, stop_loss, take_profit)
+        return f"sim-{symbol}"
+
+    async def restore_exit_orders(self, position: Position) -> None:
+        self._exits[position.symbol] = _ExitOrder(
+            position.amount, position.stop_loss, position.take_profit
+        )
 
     async def cancel_exit_orders(self, symbol: str) -> None:
         self._exits.pop(symbol, None)

@@ -8,20 +8,30 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 import httpx
+import uvicorn
 
+from tradebot.application.approvals import ApprovalQueue
 from tradebot.application.backtest import BacktestResult, BacktestRunner
+from tradebot.application.bot_control import BotControl
+from tradebot.application.bot_facade import BotFacade
 from tradebot.application.event_bus import EventBus
-from tradebot.application.indicator_feed import PrecomputedFeed
+from tradebot.application.event_log import EventLog
+from tradebot.application.indicator_feed import PrecomputedFeed, RollingFeed
+from tradebot.application.live_trader import LiveTrader
 from tradebot.application.market_risk import StaticMarketRisk
 from tradebot.application.news_risk_service import NewsRiskService
+from tradebot.application.notifications import EventNotifier
 from tradebot.application.optimizer import BacktestJob
+from tradebot.application.recorder import TradeRecorder, ledger_cash
 from tradebot.application.trading_engine import TradingEngine
 from tradebot.config import AppConfig, RiskConfig, Secrets
 from tradebot.domain.models import Candle, RiskLevel, SymbolRules
-from tradebot.domain.ports import LLMPort, MarketDataPort, NewsSourcePort
+from tradebot.domain.ports import LLMPort, MarketDataPort, NewsSourcePort, NotifierPort
 from tradebot.domain.risk import (
     AtrExitLevels,
     DailyLossLimit,
@@ -35,12 +45,20 @@ from tradebot.domain.risk import (
 )
 from tradebot.domain.strategies import Strategy, strategy_factory
 from tradebot.domain.timeframes import timeframe_delta
+from tradebot.infrastructure.exchange.ccxt_exchange import CcxtExchange
 from tradebot.infrastructure.exchange.simulated import SimulatedExchange
 from tradebot.infrastructure.llm import factory as llm_factory
 from tradebot.infrastructure.market_data.cached import CachedMarketData
 from tradebot.infrastructure.market_data.ccxt_market_data import CcxtMarketData
 from tradebot.infrastructure.news.fear_greed import FearGreedSource
 from tradebot.infrastructure.news.rss import RssNewsSource
+from tradebot.infrastructure.notify.telegram import (
+    TelegramClient,
+    TelegramController,
+    TelegramNotifier,
+)
+from tradebot.infrastructure.persistence.sqlite_repository import SqliteTradeRepository
+from tradebot.interfaces.web.app import create_app
 
 
 def build_market_data(cfg: AppConfig) -> tuple[MarketDataPort, CcxtMarketData]:
@@ -158,6 +176,7 @@ async def run_backtest(
         market_risk=StaticMarketRisk(),  # no historical news -> always NORMAL
         bus=bus,
         timeframe_delta=timeframe_delta(tf),
+        starting_cash=cfg.backtest.starting_balance,
         quote_asset=cfg.exchange.quote_asset,
     )
     runner = BacktestRunner(engine, simulator, bus)
@@ -218,3 +237,140 @@ class ParallelBacktestBatch:
     def __exit__(self, *exc: object) -> None:
         if self._pool is not None:
             self._pool.shutdown(cancel_futures=True)
+
+
+# ---------------------------------------------------------------- live trading
+@dataclass
+class LiveApp:
+    """Everything a live session needs, plus what must be closed at the end."""
+
+    trader: LiveTrader
+    engine: TradingEngine
+    control: BotControl
+    bus: EventBus
+    repo: SqliteTradeRepository
+    exchange: CcxtExchange
+    news: NewsRiskService | None
+    facade: BotFacade
+    telegram: TelegramController | None
+    _closers: list = field(default_factory=list)
+
+    async def run(self, cfg: AppConfig, dashboard: bool) -> None:
+        """Trade, and (optionally) serve the dashboard and Telegram, until STOPPED."""
+        server, server_task, telegram_task = None, None, None
+        if dashboard:
+            web = cfg.dashboard
+            server = uvicorn.Server(
+                uvicorn.Config(create_app(self.facade), web.host, web.port, log_level="warning")
+            )
+            server.install_signal_handlers = lambda: None  # let Ctrl+C reach the bot
+            server_task = asyncio.create_task(server.serve())
+        if self.telegram:
+            telegram_task = asyncio.create_task(self.telegram.run())
+        try:
+            await self.trader.run()
+        finally:
+            if server and server_task:
+                server.should_exit = True  # graceful shutdown
+                await asyncio.gather(server_task, return_exceptions=True)
+            if telegram_task:
+                telegram_task.cancel()
+                await asyncio.gather(telegram_task, return_exceptions=True)
+
+    async def aclose(self) -> None:
+        for close in self._closers:
+            await close()
+        self.repo.close()
+
+
+def database_path(cfg: AppConfig, mode: str) -> Path:
+    return cfg.data.resolved() / f"tradebot_{mode}.sqlite"
+
+
+def build_exchange(cfg: AppConfig, secrets: Secrets, mode: str) -> CcxtExchange:
+    if mode == "testnet":
+        key, secret = secrets.binance_testnet_api_key, secrets.binance_testnet_api_secret
+    elif mode == "live":
+        key, secret = secrets.binance_api_key, secrets.binance_api_secret
+    else:
+        raise ValueError(f"mode must be testnet or live, not {mode!r}")
+    if not key or not secret or not key.get_secret_value().strip():
+        raise ValueError(f"Missing Binance {mode} API key/secret in .env")
+    return CcxtExchange(
+        cfg.exchange.name,
+        key.get_secret_value().strip(),
+        secret.get_secret_value().strip(),
+        sandbox=(mode == "testnet"),
+        quote_asset=cfg.exchange.quote_asset,
+    )
+
+
+def telegram_settings(secrets: Secrets) -> tuple[str, str] | None:
+    token = (
+        secrets.telegram_bot_token.get_secret_value().strip() if secrets.telegram_bot_token else ""
+    )
+    chat = (secrets.telegram_chat_id or "").strip()
+    return (token, chat) if token and chat else None
+
+
+async def build_live_app(
+    cfg: AppConfig, secrets: Secrets, mode: str, notifiers: list[NotifierPort], verbose: bool
+) -> LiveApp:
+    bus = EventBus()
+    control = BotControl(bus, manual=cfg.trading.manual_approval)
+    approvals = ApprovalQueue(bus, cfg.trading.approval_timeout_minutes)
+    exchange = build_exchange(cfg, secrets, mode)
+    market_data, md_client = build_market_data(cfg)  # signals use real public market data
+    http = build_http(cfg)
+    repo = SqliteTradeRepository(database_path(cfg, mode))
+    TradeRecorder(repo, bus)
+    events = EventLog(bus)
+
+    telegram_client = None
+    if tg := telegram_settings(secrets):
+        telegram_client = TelegramClient(tg[0], http)
+        notifiers = [*notifiers, TelegramNotifier(telegram_client, tg[1])]
+    EventNotifier(bus, notifiers, verbose=verbose)
+
+    news = build_news_risk(cfg, secrets, http, bus) if cfg.news.enabled else None
+    strategy = build_strategy(cfg.strategy.name, cfg.strategy.params)
+    open_positions = repo.load_positions()
+    engine = TradingEngine(
+        strategy=strategy,
+        feed=(feed := RollingFeed(strategy)),
+        exchange=exchange,
+        risk_manager=build_risk_manager(cfg.risk),
+        market_risk=news or StaticMarketRisk(),
+        bus=bus,
+        timeframe_delta=timeframe_delta(cfg.market.timeframe),
+        starting_cash=ledger_cash(cfg.risk.budget_usdt, repo.load_trades(), open_positions),
+        quote_asset=cfg.exchange.quote_asset,
+        control=control,
+        approvals=approvals,
+    )
+    await engine.restore(open_positions)
+    trader = LiveTrader(
+        engine,
+        feed,
+        market_data,
+        cfg.market.symbols,
+        cfg.market.timeframe,
+        control,
+        news=news,
+        news_refresh_minutes=cfg.news.refresh_minutes,
+        history_candles=max(1000, strategy.warmup * 5),
+        strategy_factory=strategy_factory,
+    )
+    facade = BotFacade(
+        mode, cfg.risk.budget_usdt, engine, control, approvals, trader, repo, events, news,
+        list(strategy_factory.available()), {cfg.strategy.name: cfg.strategy.params},
+    )  # fmt: skip
+    telegram = (
+        TelegramController(telegram_client, tg[1], facade, control, bus)
+        if telegram_client and tg
+        else None
+    )
+    return LiveApp(
+        trader, engine, control, bus, repo, exchange, news, facade, telegram,
+        [exchange.close, md_client.close, http.aclose],
+    )  # fmt: skip

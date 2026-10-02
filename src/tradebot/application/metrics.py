@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from tradebot.application.backtest import BacktestResult
+from tradebot.domain.models import Trade
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,36 @@ class PerformanceReport:
     fees_paid: float
     buy_and_hold_pct: float  # average over symbols — the "do nothing" benchmark
     exit_reasons: dict[str, int]
+
+
+@dataclass(frozen=True)
+class TradeStats:
+    """Accuracy of a list of finished trades (live or backtest)."""
+
+    count: int
+    wins: int
+    win_rate_pct: float
+    avg_win_pct: float
+    avg_loss_pct: float
+    profit_factor: float
+    total_pnl: float
+    fees: float
+
+
+def trade_stats(trades: list[Trade]) -> TradeStats:
+    wins = [t for t in trades if t.pnl > 0]
+    losses = [t for t in trades if t.pnl <= 0]
+    won, lost = sum(t.pnl for t in wins), -sum(t.pnl for t in losses)
+    return TradeStats(
+        count=len(trades),
+        wins=len(wins),
+        win_rate_pct=len(wins) / len(trades) * 100 if trades else 0.0,
+        avg_win_pct=sum(t.pnl_pct for t in wins) / len(wins) if wins else 0.0,
+        avg_loss_pct=sum(t.pnl_pct for t in losses) / len(losses) if losses else 0.0,
+        profit_factor=won / lost if lost else (float("inf") if won else 0.0),
+        total_pnl=won - lost,
+        fees=sum(t.fees for t in trades),
+    )
 
 
 def evaluate(result: BacktestResult) -> PerformanceReport:

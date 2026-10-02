@@ -18,3 +18,7 @@ class MarketDataPort(Protocol):
     async def fetch_symbol_rules(self, symbol: str) -> SymbolRules:
         """Return min order size / quantity step for a trading pair."""
         ...
+
+    async def fetch_last_price(self, symbol: str) -> float:
+        """Latest traded price (for showing live profit/loss)."""
+        ...

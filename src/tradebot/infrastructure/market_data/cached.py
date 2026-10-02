@@ -57,6 +57,9 @@ class CachedMarketData:
 
         return [c for c in cached if start <= c.time < end]
 
+    async def fetch_last_price(self, symbol: str) -> float:
+        return await self.inner.fetch_last_price(symbol)
+
     async def fetch_symbol_rules(self, symbol: str) -> SymbolRules:
         path = self.cache_dir / "symbol_rules.json"
         stored = json.loads(path.read_text()) if path.exists() else {}

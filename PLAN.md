@@ -1,6 +1,6 @@
 # Crypto Trading Bot — Project Plan
 
-> Status: **Phase 1 + 1.5 complete (ATR stops, walk-forward optimizer; `breakout` on 4h chosen) — next: Phase 2 (news + LLM risk gate)**
+> Status: **Phases 1–4 complete. Next: Phase 5 — run on testnet for 2–4 weeks and evaluate (`tradebot trades`)**
 > Last updated: 2026-10-02
 
 ---

@@ -85,11 +85,11 @@ class BacktestRunner:
                 self.simulator.on_candle(symbol, candle)
                 await self.engine.on_candle(symbol, candle)
             now = time + self.engine.timeframe_delta
-            equity[now] = await self.engine.equity()
+            equity[now] = self.engine.equity()
 
         await self.engine.close_all(ExitReason.END_OF_TEST, now)
         if equity:
-            equity[now] = await self.engine.equity()
+            equity[now] = self.engine.equity()
 
         result.end = now
         result.equity_curve = pd.Series(equity, dtype=float)

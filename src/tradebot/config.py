@@ -98,6 +98,17 @@ class LLMConfig(BaseModel):
     cache_minutes: float = Field(10, ge=0)
 
 
+class TradingConfig(BaseModel):
+    manual_approval: bool = False  # true = every buy waits for your OK (Telegram/dashboard)
+    approval_timeout_minutes: float = Field(15, gt=0)
+
+
+class DashboardConfig(BaseModel):
+    enabled: bool = True
+    host: str = "127.0.0.1"  # localhost only — not reachable from other devices
+    port: int = 8000
+
+
 class DataConfig(BaseModel):
     dir: Path = Path("data")
 
@@ -113,6 +124,8 @@ class AppConfig(BaseModel):
     backtest: BacktestConfig = BacktestConfig()
     news: NewsConfig = NewsConfig()
     llm: LLMConfig = LLMConfig()
+    trading: TradingConfig = TradingConfig()
+    dashboard: DashboardConfig = DashboardConfig()
     data: DataConfig = DataConfig()
 
 

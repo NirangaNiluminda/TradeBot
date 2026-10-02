@@ -43,6 +43,8 @@ class ExitReason(StrEnum):
     STOP_LOSS = "stop_loss"  # price fell to our safety stop
     TAKE_PROFIT = "take_profit"  # price rose to our profit target
     END_OF_TEST = "end_of_test"  # backtest finished while still holding
+    MANUAL = "manual"  # closed by you (kill switch / dashboard)
+    EMERGENCY = "emergency"  # stop-loss could not be placed, so we sold at once
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +123,7 @@ class Position:
     stop_loss: float
     take_profit: float
     strategy: str = ""
+    exit_order_id: str = ""  # the exchange's id for the stop-loss/take-profit (OCO) order
 
     @property
     def cost(self) -> float:

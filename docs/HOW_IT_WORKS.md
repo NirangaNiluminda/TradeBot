@@ -99,7 +99,46 @@ losing much less in crashes.
 - **Too few trades:** 10 lucky trades prove nothing.
 - **One market type only:** a strategy that only worked in a bull market will fail in a bear market.
 
-## 7. How the code is organised (Clean Architecture)
+## 7. The news + LLM risk check
+
+Every 20 minutes the bot reads recent headlines (CoinDesk, Cointelegraph, Decrypt RSS + the
+Fear & Greed Index) and asks an LLM: "is it safe to open new positions right now?"
+
+- **NORMAL:** trade as usual. **CAUTION:** half size + tighter stop (at $10 that means no new
+  buys, because half is below Binance's $5 minimum). **DANGER:** no new buys.
+- The LLM must answer in strict JSON; anything else is rejected.
+- **Fail-safe:** no news, LLM down, or an analysis older than 90 minutes → CAUTION.
+  The bot gets *more* careful when it can't see the news.
+- Providers are tried in order (Gemini, then Groq). If Gemini is overloaded, Groq answers.
+- Headlines are treated as untrusted data. In tests, a headline saying "IGNORE ALL PREVIOUS
+  INSTRUCTIONS" did not fool either model.
+
+Switch provider: edit `llm.providers` in `config/config.yaml`. Add a provider: write one
+adapter class and register it in `infrastructure/llm/factory.py`.
+
+## 8. Live trading: what happens on Binance
+
+- Signals come from real Binance price data; orders go to the testnet (or live).
+- Every buy immediately gets an **OCO order** on Binance: a stop-loss and a take-profit,
+  where filling one cancels the other. This protection lives *on Binance*, so it works even
+  when your laptop is off.
+- If the stop-loss can't be placed, the bot sells immediately (never an unprotected position).
+- The bot keeps its **own cash ledger** starting from your budget ($10). The testnet gives
+  10,000 fake USDT, but the bot only ever counts and risks its $10.
+- Positions and trades are saved in `data/tradebot_testnet.sqlite` (or `_live`). After a
+  restart the bot reloads them and checks whether a stop/target filled while it was off.
+
+### Controls (dashboard, Telegram, or CLI)
+
+| Action | Effect |
+|---|---|
+| Pause | No new buys. Open positions keep their stop/target |
+| Resume | Back to normal |
+| Manual approval | Each buy waits for your ✅/❌ (expires after 15 minutes; risk re-checked at the current price) |
+| Strategy / timeframe switch | Takes effect immediately; open positions keep their exits |
+| Kill switch | Sell everything at market price and stop the bot |
+
+## 9. How the code is organised (Clean Architecture)
 
 ```
 src/tradebot/
@@ -137,8 +176,14 @@ contract. That's why the backtest runs the exact same code that will trade live.
 | Dependency Injection | `bootstrap.py` | Objects receive what they need instead of creating it themselves |
 | Strategy (again) | `PercentExitLevels` / `AtrExitLevels` | Two interchangeable ways to place stops, chosen in config |
 | Protocol + injection | `BacktestBatch` → `ParallelBacktestBatch` | The optimizer doesn't know backtests run on 3 CPU cores; tests give it a fake |
+| Decorator (again) | `RetryingLLM`, `RateLimitedLLM`, `CachingLLM` | Retries, free-tier limits and caching wrap ANY LLM provider |
+| Fallback chain | `FallbackLLM([gemini, groq])` | Next provider answers if one fails |
+| State | `BotControl`: RUNNING / PAUSED / STOPPED | Each state says what's allowed; the kill switch is final |
+| Command | `BuyRequest` in `ApprovalQueue` | A buy waiting for your decision, which can be approved, rejected or expire |
+| Facade | `BotFacade` | Telegram and the dashboard use one simple control panel |
+| Repository | `SqliteTradeRepository` | Positions and trades survive restarts; swap for Postgres later |
 
-## 8. Adding your own strategy
+## 10. Adding your own strategy
 
 1. Create `src/tradebot/domain/strategies/my_idea.py`:
 

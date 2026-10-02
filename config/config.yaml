@@ -80,3 +80,13 @@ llm:
   timeout_seconds: 60
   min_interval_seconds: 5   # pause between calls to stay inside free-tier limits
   cache_minutes: 10         # same headlines within 10 min -> reuse the answer
+
+# ── Live trading (Phase 3-4) ────────────────────────────────────
+trading:
+  manual_approval: false        # true = every buy waits for your OK (Telegram / dashboard)
+  approval_timeout_minutes: 15  # unanswered requests expire (prices move)
+
+dashboard:
+  enabled: true
+  host: 127.0.0.1               # localhost only. Don't change unless you add a password.
+  port: 8000

@@ -9,6 +9,8 @@ from tradebot.domain.ports.llm import LLMError, LLMPort, LLMRateLimited
 from tradebot.domain.ports.market_data import MarketDataPort
 from tradebot.domain.ports.market_risk import MarketRiskPort
 from tradebot.domain.ports.news import NewsSourcePort
+from tradebot.domain.ports.notifier import NotifierPort
+from tradebot.domain.ports.repository import TradeRepository
 
 __all__ = [
     "ExchangePort",
@@ -18,5 +20,7 @@ __all__ = [
     "MarketDataPort",
     "MarketRiskPort",
     "NewsSourcePort",
+    "NotifierPort",
     "OrderRejected",
+    "TradeRepository",
 ]

@@ -47,7 +47,7 @@ class OpenAICompatibleLLM:
         if r.status_code == 429:
             raise LLMRateLimited(f"{self.name}: rate limited")
         if r.status_code != 200:
-            raise LLMError(f"{self.name}: HTTP {r.status_code}: {r.text[:200]}")
+            raise LLMError(f"{self.name}: HTTP {r.status_code}: {' '.join(r.text.split())[:160]}")
         try:
             text = r.json()["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, ValueError) as exc:

@@ -9,6 +9,11 @@ uv run tradebot optimize                honest walk-forward test of ALL strategi
 uv run tradebot optimize -s ensemble    ...of one strategy, with step-by-step details
 uv run tradebot news                    latest headlines
 uv run tradebot risk                    LLM market-risk check from the news
+uv run tradebot run                     start trading on the testnet (Ctrl+C to stop)
+uv run tradebot status                  bot cash, open positions, live P/L
+uv run tradebot trades                  accuracy of the bot's real trades
+uv run tradebot close-all               emergency: sell everything
+uv run tradebot telegram-setup          find your Telegram chat id
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 import yaml
 from rich.console import Console
@@ -28,16 +34,22 @@ from rich.logging import RichHandler
 from rich.table import Table
 
 from tradebot import bootstrap
+from tradebot.application.approvals import ApprovalRequested
 from tradebot.application.backtest import BacktestResult
 from tradebot.application.event_bus import EventBus
-from tradebot.application.metrics import PerformanceReport, evaluate
+from tradebot.application.metrics import PerformanceReport, evaluate, trade_stats
 from tradebot.application.optimizer import (
     WalkForwardOptimizer,
     WalkForwardResult,
     build_candidates,
 )
+from tradebot.application.recorder import ledger_cash
 from tradebot.config import AppConfig, Secrets, load_config
+from tradebot.domain.models import ExitReason
 from tradebot.domain.strategies import strategy_factory
+from tradebot.infrastructure.notify.console import ConsoleNotifier
+from tradebot.infrastructure.notify.telegram import TelegramClient, find_chat_ids
+from tradebot.infrastructure.persistence.sqlite_repository import SqliteTradeRepository
 
 app = typer.Typer(
     help="Binance trading bot — backtesting and (soon) live trading.", no_args_is_help=True
@@ -380,6 +392,240 @@ def risk(
             "DANGER": "no new buys",
         }[assessment.level.value]
         console.print(f"[dim]Effect on the bot: {effect}[/]")
+
+    asyncio.run(main())
+
+
+ModeOpt = Annotated[
+    str | None, typer.Option("--mode", "-m", help="testnet (fake money) or live (REAL money)")
+]
+
+
+def _mode(cfg: AppConfig, mode: str | None) -> str:
+    chosen = mode or cfg.exchange.mode
+    return "testnet" if chosen == "backtest" else chosen
+
+
+@app.command()
+def run(
+    mode: ModeOpt = None,
+    confirm_real_money: Annotated[
+        bool, typer.Option(help="Required for --mode live. You can lose this money.")
+    ] = False,
+    quiet: Annotated[bool, typer.Option(help="Only show trades and risk changes")] = False,
+    dashboard: Annotated[bool, typer.Option(help="Serve the web dashboard")] = True,
+    manual: Annotated[
+        bool | None, typer.Option("--manual/--auto", help="Approve every buy yourself")
+    ] = None,
+    config: ConfigOpt = None,
+    timeframe: TimeframeOpt = None,
+    symbols: SymbolsOpt = None,
+) -> None:
+    """Start trading (testnet by default). Stop with Ctrl+C — open positions keep their
+    stop-loss and take-profit on Binance while the bot is off."""
+    cfg = _load(config, timeframe, symbols, None)
+    mode = _mode(cfg, mode)
+    if manual is not None:
+        cfg.trading.manual_approval = manual
+    dashboard = dashboard and cfg.dashboard.enabled
+    if mode == "live" and not confirm_real_money:
+        console.print("[red]Live trading uses REAL money. Re-run with --confirm-real-money.[/]")
+        raise typer.Exit(1)
+
+    async def main() -> None:
+        live = await bootstrap.build_live_app(
+            cfg, Secrets(), mode, [ConsoleNotifier(console)], verbose=not quiet
+        )
+        try:
+            if mode == "live" and await live.exchange.withdrawals_enabled():
+                console.print(
+                    "[red]Refusing to start: this API key can WITHDRAW funds. "
+                    "Create a key with only 'Reading' + 'Spot Trading' enabled.[/]"
+                )
+                return
+            with console.status("Loading history, checking open orders and news..."):
+                await live.trader.start()
+            _print_banner(cfg, mode, live, dashboard)
+            live.bus.subscribe(
+                ApprovalRequested,
+                lambda e: console.print(
+                    f"⏳ Approval needed: BUY {e.request.proposal.symbol} (request "
+                    f"#{e.request.id}) — approve on the dashboard or Telegram"
+                ),
+            )
+            await live.run(cfg, dashboard)
+        finally:
+            await live.aclose()
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopped. Open positions keep their stop-loss/take-profit.[/]")
+
+
+def _print_banner(cfg: AppConfig, mode: str, live: bootstrap.LiveApp, dashboard: bool) -> None:
+    colour = "red" if mode == "live" else "cyan"
+    console.rule(f"[bold {colour}]tradebot — {mode.upper()}")
+    console.print(
+        f"Strategy {cfg.strategy.name} {cfg.strategy.params} | {cfg.market.timeframe} | "
+        f"{', '.join(cfg.market.symbols)}"
+    )
+    console.print(
+        f"Budget ${cfg.risk.budget_usdt:.2f} | bot cash ${live.engine.cash:.2f} | "
+        f"open positions: {', '.join(live.engine.positions) or 'none'}"
+    )
+    if live.news:
+        r = live.news.current()
+        console.print(f"News risk: {r.level.value} — {r.reason} [dim]({r.source})[/]")
+    trade_mode = "MANUAL approval" if live.control.manual_approval else "AUTO"
+    console.print(f"Trade mode: {trade_mode}")
+    if dashboard:
+        console.print(f"Dashboard: [bold]http://{cfg.dashboard.host}:{cfg.dashboard.port}[/]")
+    console.print(
+        "Telegram: "
+        + ("connected" if live.telegram else "[dim]off (set TELEGRAM_BOT_TOKEN + _CHAT_ID)[/]")
+    )
+    console.print(
+        f"[dim]Checking for closed {cfg.market.timeframe} candles every 20s. Ctrl+C to stop.[/]"
+    )
+
+
+@app.command()
+def status(mode: ModeOpt = None, config: ConfigOpt = None) -> None:
+    """Bot cash, open positions and live profit/loss."""
+    cfg = _load(config, None, None, None)
+    mode = _mode(cfg, mode)
+    path = bootstrap.database_path(cfg, mode)
+    repo = SqliteTradeRepository(path)
+    positions, trades = repo.load_positions(), repo.load_trades()
+    repo.close()
+
+    async def prices() -> dict[str, float]:
+        market_data, client = bootstrap.build_market_data(cfg)
+        try:
+            return {p.symbol: await market_data.fetch_last_price(p.symbol) for p in positions}
+        finally:
+            await client.close()
+
+    now_prices = asyncio.run(prices()) if positions else {}
+    cash = ledger_cash(cfg.risk.budget_usdt, trades, positions)
+    held = sum(p.amount * now_prices[p.symbol] for p in positions)
+    equity = cash + held
+    console.rule(f"[bold]Status — {mode}")
+    console.print(
+        f"Bot equity ${equity:.2f}  (cash ${cash:.2f} + coins ${held:.2f})  |  "
+        f"budget ${cfg.risk.budget_usdt:.2f}  |  "
+        f"total {_pct((equity / cfg.risk.budget_usdt - 1) * 100)}"
+    )
+    if positions:
+        table = Table(title="Open positions")
+        for col in ["symbol", "since", "entry", "now", "P/L", "stop-loss", "target"]:
+            table.add_column(col)
+        for p in positions:
+            now_px = now_prices[p.symbol]
+            table.add_row(
+                p.symbol, f"{p.entry_time:%m-%d %H:%M}", f"{p.entry_price:,.2f}",
+                f"{now_px:,.2f}", _pct((now_px / p.entry_price - 1) * 100),
+                f"{p.stop_loss:,.2f}", f"{p.take_profit:,.2f}",
+            )  # fmt: skip
+        console.print(table)
+    else:
+        console.print("No open positions.")
+    console.print(f"Finished trades: {len(trades)}  (see: tradebot trades)")
+
+
+@app.command()
+def trades(
+    mode: ModeOpt = None,
+    last: Annotated[int, typer.Option(help="How many recent trades to list")] = 20,
+    config: ConfigOpt = None,
+) -> None:
+    """Accuracy of the bot's REAL (testnet/live) trades: win rate, profit factor, history."""
+    cfg = _load(config, None, None, None)
+    mode = _mode(cfg, mode)
+    repo = SqliteTradeRepository(bootstrap.database_path(cfg, mode))
+    history = repo.load_trades()
+    repo.close()
+    console.rule(f"[bold]Trades — {mode}")
+    if not history:
+        console.print("No finished trades yet. Start the bot with: uv run tradebot run")
+        return
+    s = trade_stats(history)
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_row("Trades", f"{s.count}  ({s.wins} won, {s.count - s.wins} lost)")
+    t.add_row("Win rate", f"{s.win_rate_pct:.1f}%")
+    t.add_row("Average win / loss", f"{_pct(s.avg_win_pct)} / {_pct(s.avg_loss_pct)}")
+    t.add_row("Profit factor", _pf(s.profit_factor) + "  [dim](>1 = profitable)[/]")
+    t.add_row("Total profit/loss", f"{s.total_pnl:+.3f} USDT")
+    t.add_row("Fees paid", f"{s.fees:.3f} USDT")
+    console.print(t)
+    if s.count < 30:
+        console.print(
+            f"[dim]Only {s.count} trades — too few to judge accuracy yet (aim for 30+).[/]"
+        )
+    table = Table(title=f"Last {min(last, len(history))} trades")
+    for col in ["symbol", "entry", "exit", "entry $", "exit $", "P/L $", "P/L %", "reason"]:
+        table.add_column(col)
+    for tr in history[-last:]:
+        colour = "green" if tr.pnl > 0 else "red"
+        table.add_row(
+            tr.symbol, f"{tr.entry_time:%m-%d %H:%M}", f"{tr.exit_time:%m-%d %H:%M}",
+            f"{tr.entry_price:,.2f}", f"{tr.exit_price:,.2f}", f"[{colour}]{tr.pnl:+.3f}[/]",
+            f"[{colour}]{tr.pnl_pct:+.2f}%[/]", tr.exit_reason.value,
+        )  # fmt: skip
+    console.print(table)
+
+
+@app.command("close-all")
+def close_all(
+    mode: ModeOpt = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Don't ask for confirmation")] = False,
+    config: ConfigOpt = None,
+) -> None:
+    """Emergency: cancel stops and SELL every open position now. Stop `run` first."""
+    cfg = _load(config, None, None, None)
+    mode = _mode(cfg, mode)
+    if not yes and not typer.confirm(f"Sell ALL open {mode} positions at market price now?"):
+        raise typer.Exit()
+
+    async def main() -> None:
+        live = await bootstrap.build_live_app(
+            cfg, Secrets(), mode, [ConsoleNotifier(console)], False
+        )
+        try:
+            if not live.engine.positions:
+                console.print("No open positions.")
+                return
+            await live.engine.close_all(ExitReason.MANUAL, datetime.now(UTC))
+            await asyncio.sleep(0.1)  # let notifications print
+        finally:
+            await live.aclose()
+
+    asyncio.run(main())
+
+
+@app.command("telegram-setup")
+def telegram_setup() -> None:
+    """Find your TELEGRAM_CHAT_ID (send any message to your bot first)."""
+    secrets = Secrets()
+    if not secrets.telegram_bot_token:
+        console.print("Put TELEGRAM_BOT_TOKEN=... (from @BotFather) in .env first.")
+        raise typer.Exit(1)
+
+    async def main() -> None:
+        async with httpx.AsyncClient(timeout=30) as http:
+            client = TelegramClient(secrets.telegram_bot_token.get_secret_value().strip(), http)
+            me = await client.call("getMe")
+            console.print(f"Bot: @{me['username']}")
+            chats = await find_chat_ids(client)
+        if not chats:
+            console.print(
+                f"No messages yet. Open Telegram, send 'hi' to @{me['username']}, then run again."
+            )
+            return
+        for chat_id, name in chats:
+            console.print(f"Chat from {name or '?'}:  [bold]TELEGRAM_CHAT_ID={chat_id}[/]")
+        console.print("Add that line to .env (only YOUR chat id — the bot obeys only that chat).")
 
     asyncio.run(main())
 

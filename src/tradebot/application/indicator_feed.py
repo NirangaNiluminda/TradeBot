@@ -72,6 +72,9 @@ class RollingFeed:
         """Load recent history at startup so the strategy can trade immediately."""
         self._candles[symbol] = deque(candles, maxlen=self.max_candles)
 
+    def candles(self, symbol: str) -> list[Candle]:
+        return list(self._candles.get(symbol, ()))
+
     def update(self, symbol: str, candle: Candle) -> MarketView:
         buf = self._candles.setdefault(symbol, deque(maxlen=self.max_candles))
         if not buf or candle.time > buf[-1].time:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from tradebot.domain.models import Fill, SymbolRules
+from tradebot.domain.models import Fill, Position, SymbolRules
 
 
 class OrderRejected(Exception):
@@ -27,9 +27,14 @@ class ExchangePort(Protocol):
 
     async def place_exit_orders(
         self, symbol: str, amount: float, stop_loss: float, take_profit: float
-    ) -> None:
+    ) -> str:
         """Place automatic stop-loss + take-profit exits (an OCO order on Binance:
-        'One Cancels the Other' — when one fills, the other is cancelled)."""
+        'One Cancels the Other' — when one fills, the other is cancelled).
+        Returns the exchange's order id."""
+        ...
+
+    async def restore_exit_orders(self, position: Position) -> None:
+        """After a restart: start watching a position's existing exit orders again."""
         ...
 
     async def cancel_exit_orders(self, symbol: str) -> None: ...

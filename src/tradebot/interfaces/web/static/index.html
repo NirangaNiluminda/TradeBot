@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tradebot</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f3f0; --surface-1: #fcfcfb; --border: #e3e2de;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
+    --grid: #ecebe7; --up: #2a78d6; --down: #e34948;
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+    --accent: #2a78d6; --btn: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2b;
+      --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+      --grid: #262624; --up: #3987e5; --down: #e66767; --accent: #3987e5; --btn: #232321;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2b;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --grid: #262624; --up: #3987e5; --down: #e66767; --accent: #3987e5; --btn: #232321;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+  h1 { font-size: 18px; margin: 0 8px 0 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-secondary);
+       margin: 0 0 10px; font-weight: 600; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+           border: 1px solid var(--border); background: var(--surface-1); font-size: 12px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .muted { color: var(--text-muted); } .secondary { color: var(--text-secondary); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, select { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+                   background: var(--btn); color: var(--text-primary); cursor: pointer; }
+  button:hover { border-color: var(--text-muted); }
+  button.danger { border-color: var(--critical); color: var(--critical); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+  .tile .label { font-size: 12px; color: var(--text-secondary); }
+  .tile .value { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile .sub { font-size: 12px; color: var(--text-muted); }
+  .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }
+  .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
+  .card { min-width: 0; }
+  select { max-width: 100%; }
+  button:disabled { opacity: .45; cursor: default; }
+  .icon { font-size: 11px; line-height: 1; }
+  #chart { height: 360px; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { padding: 4px 10px; font-size: 12px; }
+  .tabs button.active { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  .scroll { overflow-x: auto; }
+  .list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+  .list li { padding: 6px 0; border-bottom: 1px solid var(--grid); white-space: pre-line; }
+  .approval { border-left: 4px solid var(--warning); margin-bottom: 8px; }
+  .chg { display: inline-flex; align-items: center; gap: 4px; }
+  .chg .tri { font-size: 10px; }
+  .chg.up .tri { color: var(--up); } .chg.down .tri { color: var(--down); }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text-primary);
+           color: var(--surface-1); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; }
+  #toast.show { opacity: 1; }
+  @media (max-width: 900px) {
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>tradebot</h1>
+    <span class="badge" id="mode">…</span>
+    <span class="badge" id="state">…</span>
+    <span class="badge" id="risk-pill">…</span>
+    <span class="muted" id="updated"></span>
+  </header>
+
+  <div class="card row" style="justify-content: space-between">
+    <div class="row">
+      <button id="btn-pause">Pause</button>
+      <button id="btn-resume">Resume</button>
+      <label class="row secondary">Trade mode
+        <select id="trade-mode"><option value="auto">Auto</option><option value="manual">Manual approval</option></select>
+      </label>
+    </div>
+    <div class="row">
+      <label class="row secondary">Strategy <select id="strategy"></select></label>
+      <label class="row secondary">Timeframe
+        <select id="timeframe"></select>
+      </label>
+      <button id="btn-apply">Apply</button>
+      <button class="danger" id="btn-stop">Kill switch</button>
+    </div>
+  </div>
+
+  <div class="tiles">
+    <div class="card tile"><div class="label">Bot equity</div><div class="value" id="t-equity">–</div><div class="sub" id="t-equity-sub"></div></div>
+    <div class="card tile"><div class="label">Cash (USDT)</div><div class="value" id="t-cash">–</div><div class="sub" id="t-cash-sub"></div></div>
+    <div class="card tile"><div class="label">Win rate</div><div class="value" id="t-win">–</div><div class="sub" id="t-win-sub"></div></div>
+    <div class="card tile"><div class="label">Profit factor</div><div class="value" id="t-pf">–</div><div class="sub">above 1.0 = profitable</div></div>
+  </div>
+
+  <div id="approvals"></div>
+
+  <div class="grid">
+    <div class="stack">
+      <div class="card">
+        <div class="row" style="justify-content: space-between; margin-bottom: 8px">
+          <h2 style="margin:0">Price <span class="muted" id="chart-label"></span></h2>
+          <div class="tabs" id="symbol-tabs"></div>
+        </div>
+        <div id="chart" role="img" aria-label="Candlestick price chart"></div>
+        <div class="muted" style="font-size:12px;margin-top:6px">
+          Candles: <span class="chg up"><span class="tri">▲</span>up</span> ·
+          <span class="chg down"><span class="tri">▼</span>down</span> · lines show entry, stop-loss and target of an open position
+        </div>
+      </div>
+      <div class="card">
+        <h2>Finished trades</h2>
+        <div class="scroll"><table id="trades"><thead><tr>
+          <th>Symbol</th><th>Entry</th><th>Exit</th><th class="num">Entry $</th><th class="num">Exit $</th>
+          <th class="num">P/L $</th><th class="num">P/L %</th><th>Reason</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="card">
+        <h2>Open positions</h2>
+        <div class="scroll"><table id="positions"><thead><tr>
+          <th>Symbol</th><th class="num">Entry</th><th class="num">Now</th><th class="num">P/L</th>
+          <th class="num">Stop</th><th class="num">Target</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="card">
+        <h2>News risk</h2>
+        <div id="risk-reason" style="margin-bottom:6px"></div>
+        <div class="muted" id="risk-meta" style="font-size:12px;margin-bottom:8px"></div>
+        <ul class="list" id="headlines"></ul>
+      </div>
+      <div class="card">
+        <h2>Activity</h2>
+        <ul class="list" id="events"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const money = (v, d = 2) => (v == null ? "–" : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
+const pct = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+const time = (iso) => new Date(iso).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+const RISK = { NORMAL: ["var(--good)", "●", "Normal"], CAUTION: ["var(--warning)", "▲", "Caution"], DANGER: ["var(--critical)", "■", "Danger"] };
+
+let state = null, symbol = null, chart = null, series = null, priceLines = [];
+
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2500); }
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : null });
+  const data = await r.json(); toast(data.message || "done"); refresh();
+}
+function cell(text, cls) { const td = document.createElement("td"); td.textContent = text; if (cls) td.className = cls; return td; }
+function changeCell(value, text) {
+  const td = document.createElement("td"); td.className = "num";
+  const span = document.createElement("span"); span.className = "chg " + (value >= 0 ? "up" : "down");
+  const tri = document.createElement("span"); tri.className = "tri"; tri.textContent = value >= 0 ? "▲" : "▼";
+  span.append(tri, document.createTextNode(text)); td.append(span); return td;
+}
+function badge(el, color, icon, text) {
+  // status = colour + shape + words, never colour alone
+  el.replaceChildren();
+  const mark = document.createElement("span"); mark.setAttribute("aria-hidden", "true");
+  if (icon) { mark.className = "icon"; mark.textContent = icon; mark.style.color = color; }
+  else { mark.className = "dot"; mark.style.background = color; }
+  el.append(mark, document.createTextNode(text));
+}
+const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
+
+function render(s) {
+  state = s;
+  badge($("mode"), s.mode === "live" ? "var(--critical)" : "var(--accent)", "", s.mode.toUpperCase());
+  const stateColor = { RUNNING: "var(--good)", PAUSED: "var(--warning)", STOPPED: "var(--critical)" }[s.state];
+  badge($("state"), stateColor, "", s.state + " · " + (s.manual_approval ? "manual approval" : "auto"));
+  const [rc, ri, rl] = RISK[s.risk.level];
+  badge($("risk-pill"), rc, ri, "News: " + rl);
+  $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+
+  $("t-equity").textContent = "$" + money(s.equity);
+  $("t-equity-sub").textContent = pct(s.return_pct) + " vs $" + money(s.budget) + " budget";
+  $("t-cash").textContent = "$" + money(s.cash);
+  $("t-cash-sub").textContent = s.positions.length + " open position(s)";
+  $("t-win").textContent = s.stats.count ? s.stats.win_rate_pct.toFixed(0) + "%" : "–";
+  $("t-win-sub").textContent = s.stats.count + " trades · total " + (s.stats.total_pnl >= 0 ? "+" : "") + s.stats.total_pnl.toFixed(3) + " USDT";
+  $("t-pf").textContent = s.stats.count ? (s.stats.profit_factor == null ? "∞" : s.stats.profit_factor.toFixed(2)) : "–";
+
+  $("trade-mode").value = s.manual_approval ? "manual" : "auto";
+  const stratSel = $("strategy");
+  if (stratSel.options.length !== s.strategies.length) {
+    stratSel.replaceChildren(...s.strategies.map((n) => new Option(n, n)));
+  }
+  if (document.activeElement !== stratSel) stratSel.value = s.strategy.name;
+  const tfSel = $("timeframe");
+  const tfs = TIMEFRAMES.includes(s.timeframe) ? TIMEFRAMES : [...TIMEFRAMES, s.timeframe];
+  if (tfSel.options.length !== tfs.length) tfSel.replaceChildren(...tfs.map((t) => new Option(t, t)));
+  if (document.activeElement !== tfSel) tfSel.value = s.timeframe;
+  $("btn-pause").disabled = s.state !== "RUNNING";
+  $("btn-resume").disabled = s.state !== "PAUSED";
+
+  // approvals
+  const ap = $("approvals"); ap.replaceChildren();
+  for (const r of s.approvals) {
+    const c = document.createElement("div"); c.className = "card approval row"; c.style.justifyContent = "space-between";
+    const info = document.createElement("div");
+    info.textContent = `⏳ Approve BUY ${r.symbol} ≈ $${money(r.quote_amount)} at ~${money(r.price)} — ${r.reason} (expires ${time(r.expires)})`;
+    const btns = document.createElement("div"); btns.className = "row";
+    const ok = document.createElement("button"); ok.className = "primary"; ok.textContent = "✅ Approve";
+    ok.onclick = () => post(`/api/approvals/${r.id}/approve`);
+    const no = document.createElement("button"); no.textContent = "❌ Reject";
+    no.onclick = () => post(`/api/approvals/${r.id}/reject`);
+    btns.append(ok, no); c.append(info, btns); ap.append(c);
+  }
+
+  // positions
+  const pb = $("positions").tBodies[0]; pb.replaceChildren();
+  if (!s.positions.length) { const tr = pb.insertRow(); const td = cell("No open positions", "muted"); td.colSpan = 6; tr.append(td); }
+  for (const p of s.positions) {
+    const tr = pb.insertRow();
+    tr.append(cell(p.symbol), cell(money(p.entry_price), "num"), cell(money(p.price), "num"),
+      changeCell(p.pnl_pct, " " + pct(p.pnl_pct)), cell(money(p.stop_loss), "num"), cell(money(p.take_profit), "num"));
+  }
+
+  // trades
+  const tb = $("trades").tBodies[0]; tb.replaceChildren();
+  if (!s.trades.length) { const tr = tb.insertRow(); const td = cell("No finished trades yet", "muted"); td.colSpan = 8; tr.append(td); }
+  for (const t of s.trades) {
+    const tr = tb.insertRow();
+    tr.append(cell(t.symbol), cell(time(t.entry_time)), cell(time(t.exit_time)), cell(money(t.entry_price), "num"),
+      cell(money(t.exit_price), "num"), changeCell(t.pnl, " " + (t.pnl >= 0 ? "+" : "") + t.pnl.toFixed(3)),
+      changeCell(t.pnl_pct, " " + pct(t.pnl_pct)), cell(t.reason));
+  }
+
+  // news
+  $("risk-reason").textContent = s.risk.reason;
+  $("risk-meta").textContent = `Sentiment ${s.risk.sentiment >= 0 ? "+" : ""}${s.risk.sentiment.toFixed(2)} · by ${s.risk.source}` + (s.risk.time ? " · " + time(s.risk.time) : "");
+  $("headlines").replaceChildren(...s.risk.headlines.map((h) => {
+    const li = document.createElement("li"); li.textContent = h.title;
+    const m = document.createElement("div"); m.className = "muted"; m.style.fontSize = "12px"; m.textContent = `${h.source} · ${time(h.published)}`;
+    li.append(m); return li;
+  }));
+  $("events").replaceChildren(...s.events.map((e) => {
+    const li = document.createElement("li");
+    const m = document.createElement("div"); m.className = "muted"; m.style.fontSize = "12px"; m.textContent = `${time(e.time)} · ${e.kind}`;
+    li.append(m, document.createTextNode(e.text)); return li;
+  }));
+
+  // symbol tabs
+  if (!symbol) symbol = s.symbols[0];
+  const tabs = $("symbol-tabs");
+  if (tabs.children.length !== s.symbols.length) {
+    tabs.replaceChildren(...s.symbols.map((sym) => {
+      const b = document.createElement("button"); b.textContent = sym; b.onclick = () => { symbol = sym; loadCandles(); renderTabs(); }; return b;
+    }));
+  }
+  renderTabs();
+  drawPositionLines();
+}
+function renderTabs() { for (const b of $("symbol-tabs").children) b.classList.toggle("active", b.textContent === symbol); }
+
+function makeChart() {
+  const el = $("chart");
+  chart = LightweightCharts.createChart(el, {
+    autoSize: true,
+    layout: { background: { color: "transparent" }, textColor: css("--text-secondary"), fontFamily: "system-ui" },
+    grid: { vertLines: { color: css("--grid") }, horzLines: { color: css("--grid") } },
+    rightPriceScale: { borderColor: css("--border") },
+    timeScale: { borderColor: css("--border"), timeVisible: true },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  series = chart.addCandlestickSeries({
+    upColor: css("--up"), downColor: css("--down"), borderVisible: false,
+    wickUpColor: css("--up"), wickDownColor: css("--down"),
+  });
+}
+async function loadCandles() {
+  if (!symbol) return;
+  const data = await (await fetch(`/api/candles/${symbol}`)).json();
+  series.setData(data);
+  $("chart-label").textContent = `${symbol} · ${state ? state.timeframe : ""}`;
+  drawPositionLines();
+}
+function drawPositionLines() {
+  if (!series || !state) return;
+  priceLines.forEach((l) => series.removePriceLine(l)); priceLines = [];
+  const p = state.positions.find((x) => x.symbol === symbol);
+  if (!p) return;
+  const line = (price, color, title, style) => priceLines.push(series.createPriceLine({ price, color, title, lineWidth: 2, lineStyle: style, axisLabelVisible: true }));
+  line(p.entry_price, css("--text-secondary"), "entry", LightweightCharts.LineStyle.Dashed);
+  line(p.stop_loss, css("--critical"), "stop-loss", LightweightCharts.LineStyle.Solid);
+  line(p.take_profit, css("--good"), "target", LightweightCharts.LineStyle.Solid);
+}
+
+async function refresh() {
+  try { render(await (await fetch("/api/state")).json()); }
+  catch { $("updated").textContent = "⚠ bot not reachable"; }
+}
+
+$("btn-pause").onclick = () => post("/api/control/pause");
+$("btn-resume").onclick = () => post("/api/control/resume");
+$("btn-stop").onclick = () => { if (confirm("KILL SWITCH: sell ALL positions now and stop the bot?")) post("/api/control/stop"); };
+$("trade-mode").onchange = (e) => post("/api/mode", { manual: e.target.value === "manual" });
+$("btn-apply").onclick = () => post("/api/reconfigure", { strategy: $("strategy").value, timeframe: $("timeframe").value }).then(loadCandles);
+
+makeChart();
+refresh().then(loadCandles);
+setInterval(refresh, 5000);
+setInterval(loadCandles, 30000);
+</script>
+</body>
+</html>

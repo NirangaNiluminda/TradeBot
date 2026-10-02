@@ -39,7 +39,7 @@ class GeminiLLM:
         if r.status_code == 429:
             raise LLMRateLimited(f"{self.name}: rate limited")
         if r.status_code != 200:
-            raise LLMError(f"{self.name}: HTTP {r.status_code}: {r.text[:200]}")
+            raise LLMError(f"{self.name}: HTTP {r.status_code}: {' '.join(r.text.split())[:160]}")
         try:
             parts = r.json()["candidates"][0]["content"]["parts"]
             text = "".join(p.get("text", "") for p in parts if not p.get("thought"))

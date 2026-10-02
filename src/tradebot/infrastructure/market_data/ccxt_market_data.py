@@ -11,6 +11,7 @@ import ccxt.async_support as ccxt
 
 from tradebot.domain.models import Candle, SymbolRules
 from tradebot.domain.timeframes import timeframe_seconds
+from tradebot.infrastructure.ccxt_common import symbol_rules
 
 _PAGE = 1000  # Binance returns at most 1000 candles per request
 
@@ -49,17 +50,11 @@ class CcxtMarketData:
         if not self._markets_loaded:
             await self._exchange.load_markets()
             self._markets_loaded = True
-        market = self._exchange.market(symbol)
-        step = market["precision"]["amount"]
-        if self._exchange.precisionMode == ccxt.DECIMAL_PLACES:
-            step = 10 ** -int(step)
-        limits = market["limits"]
-        return SymbolRules(
-            symbol=symbol,
-            min_notional=float(limits["cost"]["min"] or 0.0),
-            amount_step=float(step),
-            min_amount=float(limits["amount"]["min"] or 0.0),
-        )
+        return symbol_rules(self._exchange, symbol)
+
+    async def fetch_last_price(self, symbol: str) -> float:
+        ticker = await self._exchange.fetch_ticker(symbol)
+        return float(ticker["last"])
 
     async def close(self) -> None:
         await self._exchange.close()
