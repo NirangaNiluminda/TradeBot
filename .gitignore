@@ -1,0 +1,17 @@
+# Secrets — NEVER commit these
+.env
+*.env
+!config/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Downloaded market data, databases, backtest outputs
+data/*
+!data/.gitkeep
