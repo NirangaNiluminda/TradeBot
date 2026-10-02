@@ -38,8 +38,11 @@ Settings (symbols, timeframe, strategy, risk numbers, backtest period) are in
 ## Running the bot
 
 ```bash
-uv run tradebot risk                       # check the news + LLM risk gate works
-uv run tradebot run                        # trade on the TESTNET (fake money) + dashboard
+uv run tradebot analyze --explain          # market picture now, in simple words (never trades)
+uv run tradebot run                        # TESTNET + dashboard; waits for you to press ▶ Start
+uv run tradebot run --start                # ...start trading immediately
+uv run tradebot run --no-loop              # ...do one trade, then pause
+uv run tradebot run --explain              # ...LLM explains analyses and trades
 uv run tradebot run --manual               # ...approve every buy yourself
 uv run tradebot status                     # cash, open positions, live P/L
 uv run tradebot trades                     # accuracy of the bot's real trades
@@ -48,8 +51,10 @@ uv run tradebot telegram-setup             # find your Telegram chat id
 ```
 
 While `run` is going, open the dashboard at **http://127.0.0.1:8000**:
-equity, positions with stop/target lines on the chart, news risk + headlines,
-approve/reject buttons, pause/resume, strategy & timeframe switch, kill switch.
+**▶ Start trading** (analyses the market immediately and acts), Pause, **Loop** and
+**Explain** switches, market analysis per coin, equity, positions with stop/target lines,
+news risk + headlines, approve/reject buttons, strategy & timeframe switch, kill switch.
+Telegram has the same controls: `/trade`, `/analyze`, `/loop on|off`, `/explain on|off`, `/pause`.
 
 Ctrl+C stops the program, but open positions **keep their stop-loss and
 take-profit on Binance** (an OCO order), and the bot picks them up again on restart.

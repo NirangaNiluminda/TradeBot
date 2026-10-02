@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import HOUR, candle
+from tests.conftest import HOUR, candle, random_walk
 from tradebot.application.approvals import ApprovalQueue, ApprovalResolved
 from tradebot.application.bot_control import BotControl
 from tradebot.application.bot_facade import BotFacade
@@ -36,7 +36,7 @@ def rig(unit_rules, tmp_path):
     ex.on_candle(SYM, candle(0, 100.0))
     strategy = strategy_factory.create("breakout")
     feed = RollingFeed(strategy)
-    feed.seed(SYM, [candle(i, 100.0 + i) for i in range(30)])
+    feed.seed(SYM, random_walk(300))
     engine = TradingEngine(
         strategy, feed, ex, build_risk_manager(RiskConfig()), StaticMarketRisk(), bus,
         timedelta(hours=1), starting_cash=10.0, control=control, approvals=approvals,
@@ -99,7 +99,7 @@ async def test_telegram_commands_and_stranger_is_ignored(rig):
     await tg.handle({"message": {"chat": {"id": 999}, "text": "/stop confirm"}})
     assert control.state.keeps_running and not sent  # stranger ignored, no reply
     await tg.handle({"message": {"chat": {"id": 42}, "text": "/resume"}})
-    assert control.state.allows_new_trades and sent[-1][1]["text"] == "Resumed."
+    assert control.state.allows_new_trades and "Trading started" in sent[-1][1]["text"]
 
 
 async def test_telegram_approve_button(rig):
@@ -123,9 +123,62 @@ def test_dashboard_api(rig):
     assert "tradebot" in client.get("/").text
     s = client.get("/api/state").json()
     assert s["mode"] == "testnet" and s["state"] == "RUNNING" and s["equity"] == 10.0
-    assert len(client.get(f"/api/candles/{SYM}").json()) == 30
+    assert len(client.get(f"/api/candles/{SYM}").json()) == 300
     assert "Paused" in client.post("/api/control/pause").json()["message"]
     assert client.get("/api/state").json()["state"] == "PAUSED"
     assert client.post("/api/control/nope").status_code == 404
     client.post("/api/mode", json={"manual": False})
     assert control.manual_approval is False
+
+
+# ---------------------------------------------------------------- start / loop / explain
+async def test_start_from_paused_analyses_immediately(rig):
+    engine, approvals, facade, bus, control = rig
+    control.pause()
+    msg = await facade.start()
+    assert control.state.allows_new_trades and "Trading started" in msg and SYM in msg
+
+
+async def test_loop_off_pauses_after_a_trade(rig):
+    engine, approvals, facade, bus, control = rig
+    control.manual_approval = False
+    facade.set_loop(False)
+    await engine.execute_buy(
+        __import__("tradebot.domain.models", fromlist=["TradeProposal"]).TradeProposal(
+            SYM, 100.0, quote_amount=9.5, stop_loss=98.0, take_profit=104.0
+        ),
+        NOW,
+    )
+    await engine.close_position(
+        SYM, __import__("tradebot.domain.models", fromlist=["ExitReason"]).ExitReason.MANUAL, NOW
+    )
+    assert control.state.name == "PAUSED"
+
+
+def test_analysis_snapshot(rig):
+    engine, approvals, facade, bus, control = rig
+    [snap] = facade.snapshots()
+    assert snap.symbol == SYM and snap.trend in ("uptrend", "downtrend", "sideways")
+    assert "Buys when a candle closes above" in snap.strategy_view
+    assert facade.state()["analysis"][0]["symbol"] == SYM
+
+
+async def test_explainer_respects_toggle(rig):
+    from tradebot.application.explainer import Explainer, ExplanationReady
+
+    engine, approvals, facade, bus, control = rig
+    calls, seen = [], []
+
+    class FakeLLM:
+        name = "fake"
+
+        async def complete_json(self, system, prompt):
+            calls.append(prompt)
+            return {"explanations": {SYM: "Price is rising; the bot waits for a breakout."}}
+
+    bus.subscribe(ExplanationReady, seen.append)
+    ex = Explainer(FakeLLM(), bus, control, facade.snapshots, engine.market_risk.current)
+    assert await ex.explain() == {} and not calls  # OFF -> no LLM call at all
+    control.set_explain(True)
+    out = await ex.explain()
+    assert out[SYM].startswith("Price is rising") and len(calls) == 1 and seen

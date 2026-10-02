@@ -57,6 +57,20 @@
   select { max-width: 100%; }
   button:disabled { opacity: .45; cursor: default; }
   .icon { font-size: 11px; line-height: 1; }
+  .switch { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); cursor: pointer; }
+  .switch input { width: 34px; height: 18px; appearance: none; border-radius: 999px; background: var(--grid);
+                  border: 1px solid var(--border); position: relative; cursor: pointer; margin: 0; }
+  .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+                         border-radius: 50%; background: var(--text-muted); transition: left .15s; }
+  .switch input:checked { background: var(--accent); border-color: var(--accent); }
+  .switch input:checked::after { left: 18px; background: #fff; }
+  .coin { padding: 10px 0; border-bottom: 1px solid var(--grid); }
+  .coin:last-child { border-bottom: 0; }
+  .coin .head { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+  .coin .head b { font-size: 15px; }
+  .coin .view { color: var(--text-secondary); margin-top: 4px; }
+  .coin .explain { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--surface-0); }
+  .pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); }
   #chart { height: 360px; }
   .tabs { display: flex; gap: 4px; }
   .tabs button { padding: 4px 10px; font-size: 12px; }
@@ -93,8 +107,10 @@
 
   <div class="card row" style="justify-content: space-between">
     <div class="row">
+      <button class="primary" id="btn-start">▶ Start trading</button>
       <button id="btn-pause">Pause</button>
-      <button id="btn-resume">Resume</button>
+      <label class="switch" title="After each trade, automatically look for the next one"><input type="checkbox" id="opt-loop">Loop</label>
+      <label class="switch" title="LLM explains analyses and trades in simple words"><input type="checkbox" id="opt-explain">Explain</label>
       <label class="row secondary">Trade mode
         <select id="trade-mode"><option value="auto">Auto</option><option value="manual">Manual approval</option></select>
       </label>
@@ -117,6 +133,14 @@
   </div>
 
   <div id="approvals"></div>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="row" style="justify-content: space-between; margin-bottom: 4px">
+      <h2 style="margin:0">Market analysis</h2>
+      <button id="btn-analyze">Analyze now</button>
+    </div>
+    <div id="analysis"></div>
+  </div>
 
   <div class="grid">
     <div class="stack">
@@ -173,7 +197,7 @@ let state = null, symbol = null, chart = null, series = null, priceLines = [];
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2500); }
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : null });
-  const data = await r.json(); toast(data.message || "done"); refresh();
+  const data = await r.json(); toast((data.message || "done").split("\n")[0]); refresh();
 }
 function cell(text, cls) { const td = document.createElement("td"); td.textContent = text; if (cls) td.className = cls; return td; }
 function changeCell(value, text) {
@@ -220,7 +244,33 @@ function render(s) {
   if (tfSel.options.length !== tfs.length) tfSel.replaceChildren(...tfs.map((t) => new Option(t, t)));
   if (document.activeElement !== tfSel) tfSel.value = s.timeframe;
   $("btn-pause").disabled = s.state !== "RUNNING";
-  $("btn-resume").disabled = s.state !== "PAUSED";
+  $("btn-start").disabled = s.state === "STOPPED";
+  $("btn-start").textContent = s.state === "RUNNING" ? "▶ Check now" : "▶ Start trading";
+  $("opt-loop").checked = s.loop;
+  $("opt-explain").checked = s.explain;
+
+  // market analysis
+  $("analysis").replaceChildren(...s.analysis.map((a) => {
+    const d = document.createElement("div"); d.className = "coin";
+    const head = document.createElement("div"); head.className = "head";
+    const name = document.createElement("b"); name.textContent = a.symbol;
+    const price = document.createElement("span"); price.textContent = money(a.price);
+    const ch = document.createElement("span"); ch.className = "chg " + (a.change_24h_pct >= 0 ? "up" : "down");
+    const tri = document.createElement("span"); tri.className = "tri"; tri.textContent = a.change_24h_pct >= 0 ? "▲" : "▼";
+    ch.append(tri, document.createTextNode(" " + pct(a.change_24h_pct ?? 0) + " 24h"));
+    const facts = document.createElement("span"); facts.className = "secondary";
+    facts.textContent = `${a.trend} (strength ${a.trend_strength.toFixed(0)}) · RSI ${a.rsi.toFixed(0)} · moves ~${a.volatility_pct.toFixed(1)}%/candle`;
+    const status = document.createElement("span"); status.className = "pill"; status.textContent = a.status;
+    head.append(name, price, ch, facts, status);
+    const view = document.createElement("div"); view.className = "view"; view.textContent = a.strategy_view;
+    d.append(head, view);
+    const ex = s.explanations[a.symbol];
+    if (s.explain && ex) {
+      const e = document.createElement("div"); e.className = "explain"; e.textContent = "💬 " + ex.text;
+      d.append(e);
+    }
+    return d;
+  }));
 
   // approvals
   const ap = $("approvals"); ap.replaceChildren();
@@ -308,6 +358,13 @@ function drawPositionLines() {
   if (!series || !state) return;
   priceLines.forEach((l) => series.removePriceLine(l)); priceLines = [];
   const p = state.positions.find((x) => x.symbol === symbol);
+  // keep stop-loss and target inside the visible price range
+  series.applyOptions({ autoscaleInfoProvider: (original) => {
+    const r = original();
+    if (!p || !r) return r;
+    return { priceRange: { minValue: Math.min(r.priceRange.minValue, p.stop_loss),
+                           maxValue: Math.max(r.priceRange.maxValue, p.take_profit) } };
+  } });
   if (!p) return;
   const line = (price, color, title, style) => priceLines.push(series.createPriceLine({ price, color, title, lineWidth: 2, lineStyle: style, axisLabelVisible: true }));
   line(p.entry_price, css("--text-secondary"), "entry", LightweightCharts.LineStyle.Dashed);
@@ -321,7 +378,10 @@ async function refresh() {
 }
 
 $("btn-pause").onclick = () => post("/api/control/pause");
-$("btn-resume").onclick = () => post("/api/control/resume");
+$("btn-start").onclick = () => post("/api/start");
+$("btn-analyze").onclick = () => post("/api/analyze");
+$("opt-loop").onchange = (e) => post("/api/options", { loop: e.target.checked });
+$("opt-explain").onchange = (e) => post("/api/options", { explain: e.target.checked });
 $("btn-stop").onclick = () => { if (confirm("KILL SWITCH: sell ALL positions now and stop the bot?")) post("/api/control/stop"); };
 $("trade-mode").onchange = (e) => post("/api/mode", { manual: e.target.value === "manual" });
 $("btn-apply").onclick = () => post("/api/reconfigure", { strategy: $("strategy").value, timeframe: $("timeframe").value }).then(loadCandles);

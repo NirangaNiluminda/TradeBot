@@ -50,6 +50,14 @@ class RsiReversion(Strategy):
         out["ema_trend"] = ema(out["close"], self.trend) if self.trend else 0.0
         return out
 
+    def describe(self, history: Frame) -> str:
+        r = history["rsi"][-1]
+        trend = "above" if history["close"][-1] > history["ema_trend"][-1] else "below"
+        return (
+            f"RSI is {r:.0f}; price is {trend} the trend line. Buys when RSI climbs back above "
+            f"{self.oversold:.0f} in an uptrend; sells when RSI reaches {self.exit_level:.0f}."
+        )
+
     def signal(self, history: Frame, ctx: StrategyContext) -> Signal:
         if len(history) < 2:
             return Signal.hold("not enough data")

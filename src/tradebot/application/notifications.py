@@ -11,6 +11,7 @@ import logging
 
 from tradebot.application.bot_control import BotStateChanged
 from tradebot.application.event_bus import EventBus
+from tradebot.application.explainer import ExplanationReady
 from tradebot.domain.events import (
     PositionClosed,
     PositionOpened,
@@ -60,6 +61,7 @@ class EventNotifier:
         bus.subscribe(PositionClosed, lambda e: self._send(describe_closed(e)))
         bus.subscribe(RiskChanged, lambda e: self._send(describe_risk(e)))
         bus.subscribe(BotStateChanged, lambda e: self._send(f"⚙️ Bot {e.current} ({e.reason})"))
+        bus.subscribe(ExplanationReady, lambda e: self._send(f"💬 {e.symbol}: {e.text}"))
         if verbose:
             bus.subscribe(
                 SignalGenerated,

@@ -99,6 +99,9 @@ class LLMConfig(BaseModel):
 
 
 class TradingConfig(BaseModel):
+    auto_start: bool = True  # false = wait until you press Start (dashboard / Telegram /trade)
+    loop: bool = True  # after a trade finishes, look for the next one (false = one trade)
+    explain: bool = False  # LLM explains analyses and trades in simple words
     manual_approval: bool = False  # true = every buy waits for your OK (Telegram/dashboard)
     approval_timeout_minutes: float = Field(15, gt=0)
 

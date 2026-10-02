@@ -5,7 +5,7 @@ Uses the Telegram Bot HTTP API directly (no extra library).
 Security: the bot ONLY reacts to messages from your own chat id
 (TELEGRAM_CHAT_ID). Messages from anyone else are ignored.
 
-Commands:  /status /trades /risk /pause /resume /stop /manual /auto /help
+Commands:  /trade /analyze /status /trades /risk /pause /loop /explain /manual /auto /stop
 """
 
 from __future__ import annotations
@@ -25,11 +25,14 @@ log = logging.getLogger(__name__)
 
 HELP = (
     "Commands:\n"
+    "/trade – START trading: analyse now and act\n"
+    "/analyze – market picture for every coin\n"
     "/status – equity, positions, news risk\n"
     "/trades – accuracy of finished trades\n"
     "/risk – latest news risk\n"
     "/pause – no new buys (exits stay active)\n"
-    "/resume – trade again\n"
+    "/loop on|off – keep trading after each trade, or stop after one\n"
+    "/explain on|off – simple-words explanations from the LLM\n"
     "/manual – every buy needs your OK\n"
     "/auto – bot buys by itself\n"
     "/stop confirm – KILL SWITCH: sell everything and stop"
@@ -117,10 +120,17 @@ class TelegramController:
         if cmd == "/risk":
             r = f.state()["risk"]
             return f"News risk: {r['level']} (sentiment {r['sentiment']:+.2f})\n{r['reason']}"
+        if cmd in ("/trade", "/resume"):
+            return await f.start()
+        if cmd == "/analyze":
+            return await f.analyze()
         if cmd == "/pause":
             return f.pause()
-        if cmd == "/resume":
-            return f.resume()
+        if cmd in ("/loop", "/explain"):
+            if args[:1] not in (["on"], ["off"]):
+                return f"Use: {cmd} on   or   {cmd} off"
+            on = args[0] == "on"
+            return f.set_loop(on) if cmd == "/loop" else f.set_explain(on)
         if cmd == "/manual":
             return f.set_manual(True)
         if cmd == "/auto":

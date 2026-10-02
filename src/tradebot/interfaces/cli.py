@@ -10,6 +10,7 @@ uv run tradebot optimize -s ensemble    ...of one strategy, with step-by-step de
 uv run tradebot news                    latest headlines
 uv run tradebot risk                    LLM market-risk check from the news
 uv run tradebot run                     start trading on the testnet (Ctrl+C to stop)
+uv run tradebot analyze --explain       market picture now (never trades)
 uv run tradebot status                  bot cash, open positions, live P/L
 uv run tradebot trades                  accuracy of the bot's real trades
 uv run tradebot close-all               emergency: sell everything
@@ -417,6 +418,16 @@ def run(
     manual: Annotated[
         bool | None, typer.Option("--manual/--auto", help="Approve every buy yourself")
     ] = None,
+    start: Annotated[
+        bool | None,
+        typer.Option("--start/--wait", help="Start trading at once, or wait for the Start button"),
+    ] = None,
+    loop: Annotated[
+        bool | None, typer.Option("--loop/--no-loop", help="Keep trading after each trade")
+    ] = None,
+    explain: Annotated[
+        bool | None, typer.Option("--explain/--no-explain", help="LLM explanations")
+    ] = None,
     config: ConfigOpt = None,
     timeframe: TimeframeOpt = None,
     symbols: SymbolsOpt = None,
@@ -425,8 +436,14 @@ def run(
     stop-loss and take-profit on Binance while the bot is off."""
     cfg = _load(config, timeframe, symbols, None)
     mode = _mode(cfg, mode)
-    if manual is not None:
-        cfg.trading.manual_approval = manual
+    for field_name, value in [
+        ("manual_approval", manual),
+        ("auto_start", start),
+        ("loop", loop),
+        ("explain", explain),
+    ]:
+        if value is not None:
+            setattr(cfg.trading, field_name, value)
     dashboard = dashboard and cfg.dashboard.enabled
     if mode == "live" and not confirm_real_money:
         console.print("[red]Live trading uses REAL money. Re-run with --confirm-real-money.[/]")
@@ -477,8 +494,19 @@ def _print_banner(cfg: AppConfig, mode: str, live: bootstrap.LiveApp, dashboard:
     if live.news:
         r = live.news.current()
         console.print(f"News risk: {r.level.value} — {r.reason} [dim]({r.source})[/]")
-    trade_mode = "MANUAL approval" if live.control.manual_approval else "AUTO"
-    console.print(f"Trade mode: {trade_mode}")
+    c = live.control
+    trade_mode = "MANUAL approval" if c.manual_approval else "AUTO"
+    console.print(
+        f"Trade mode: {trade_mode} | loop {'ON' if c.loop else 'OFF'} | "
+        f"explain {'ON' if c.explain else 'OFF'}"
+    )
+    if c.state.allows_new_trades:
+        console.print("[green]▶ Trading started[/] (checked the market just now)")
+    else:
+        console.print(
+            "[yellow]⏸ Waiting for you: press ▶ Start on the dashboard or send /trade "
+            "on Telegram[/]"
+        )
     if dashboard:
         console.print(f"Dashboard: [bold]http://{cfg.dashboard.host}:{cfg.dashboard.port}[/]")
     console.print(
@@ -488,6 +516,35 @@ def _print_banner(cfg: AppConfig, mode: str, live: bootstrap.LiveApp, dashboard:
     console.print(
         f"[dim]Checking for closed {cfg.market.timeframe} candles every 20s. Ctrl+C to stop.[/]"
     )
+
+
+@app.command("analyze")
+def analyze_cmd(
+    explain: Annotated[bool, typer.Option(help="Add an LLM explanation in simple words")] = False,
+    mode: ModeOpt = None,
+    config: ConfigOpt = None,
+    timeframe: TimeframeOpt = None,
+    symbols: SymbolsOpt = None,
+) -> None:
+    """Market picture right now: trend, momentum, what the strategy waits for. Never trades."""
+    cfg = _load(config, timeframe, symbols, None)
+    cfg.trading.auto_start = False  # analysing only — no trading
+    cfg.trading.explain = explain
+
+    async def main() -> None:
+        live = await bootstrap.build_live_app(cfg, Secrets(), _mode(cfg, mode), [], False)
+        try:
+            with console.status("Loading candles and news..."):
+                await live.trader.start()
+                text = await live.facade.analyze()
+            console.print(text)
+            if live.news:
+                r = live.news.current()
+                console.print(f"📰 News risk: {r.level.value} — {r.reason}")
+        finally:
+            await live.aclose()
+
+    asyncio.run(main())
 
 
 @app.command()

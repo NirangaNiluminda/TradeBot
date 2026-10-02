@@ -93,6 +93,12 @@ about 1.2–1.3). `regime_switch` looked best on BTC/ETH over 2 years (+43%) but
 coins, so it was luck. Even `breakout` trails buy & hold in strong bull markets. Its value is
 losing much less in crashes.
 
+**Tested and rejected: "late entry" (2026-10-02).** Idea: when the bot starts, also act on a
+buy signal from the last 2–6 candles if the price hasn't moved far. Walk-forward result:
+BTC/ETH 5 years +52% → +21–51%; unseen coins SOL/BNB/XRP +42% → **−10% to −22%**.
+Chasing old signals buys worse entries, so "Start" only acts on the latest closed candle. The
+option still exists (`late_entry_window` in strategy params) for your own experiments.
+
 **Common traps:**
 - **Overfitting:** tweaking settings until the past looks perfect. The future won't match.
   Always check results on a *different* period (e.g. `--days 730` vs `--days 365`).
@@ -132,8 +138,11 @@ adapter class and register it in `infrastructure/llm/factory.py`.
 
 | Action | Effect |
 |---|---|
+| ▶ Start trading (`/trade`) | Analyses every coin **right now** and buys if the latest closed candle gives a real signal, then keeps watching |
+| Loop on / off | On: after each trade, immediately look for the next one. Off: one trade, then pause until you press Start |
+| Explain on / off | On: the LLM explains the analysis and every new trade in simple words. Off: no extra LLM calls |
+| Analyze now (`/analyze`) | Trend, RSI, volatility, 24h change, and what the strategy is waiting for, per coin |
 | Pause | No new buys. Open positions keep their stop/target |
-| Resume | Back to normal |
 | Manual approval | Each buy waits for your ✅/❌ (expires after 15 minutes; risk re-checked at the current price) |
 | Strategy / timeframe switch | Takes effect immediately; open positions keep their exits |
 | Kill switch | Sell everything at market price and stop the bot |

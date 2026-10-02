@@ -48,6 +48,15 @@ class Breakout(Strategy):
         out["avg_volume"] = sma(out["volume"], self.entry_period).shift(1)
         return out
 
+    def describe(self, history: Frame) -> str:
+        close, upper, lower = history["close"][-1], history["upper"][-1], history["lower"][-1]
+        vol = history["volume"][-1] / history["avg_volume"][-1]
+        return (
+            f"Buys when a candle closes above {upper:,.2f} ({(upper / close - 1) * 100:+.1f}% "
+            f"from now) with volume at least {self.volume_mult}x normal (last candle {vol:.1f}x). "
+            f"Exits if price closes below {lower:,.2f}."
+        )
+
     def signal(self, history: Frame, ctx: StrategyContext) -> Signal:
         close, volume = history["close"][-1], history["volume"][-1]
         if close < history["lower"][-1]:

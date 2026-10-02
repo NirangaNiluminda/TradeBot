@@ -29,6 +29,11 @@ class TradeMode(BaseModel):
     manual: bool
 
 
+class Options(BaseModel):
+    loop: bool | None = None
+    explain: bool | None = None
+
+
 def create_app(facade: BotFacade) -> FastAPI:
     app = FastAPI(title="tradebot", docs_url=None, redoc_url=None)
 
@@ -50,6 +55,23 @@ def create_app(facade: BotFacade) -> FastAPI:
         if action not in actions:
             raise HTTPException(404, "unknown action")
         return {"message": actions[action]()}
+
+    @app.post("/api/start")
+    async def start() -> dict:
+        return {"message": await facade.start()}
+
+    @app.post("/api/analyze")
+    async def analyze() -> dict:
+        return {"message": await facade.analyze()}
+
+    @app.post("/api/options")
+    async def options(body: Options) -> dict:
+        messages = []
+        if body.loop is not None:
+            messages.append(facade.set_loop(body.loop))
+        if body.explain is not None:
+            messages.append(facade.set_explain(body.explain))
+        return {"message": " ".join(messages) or "nothing changed"}
 
     @app.post("/api/mode")
     async def mode(body: TradeMode) -> dict:

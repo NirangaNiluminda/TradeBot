@@ -83,6 +83,11 @@ llm:
 
 # ── Live trading (Phase 3-4) ────────────────────────────────────
 trading:
+  auto_start: false             # false = after `run`, wait until you press ▶ Start
+                                #   (dashboard) or send /trade (Telegram). true = start at once.
+  loop: true                    # true = after each trade, look for the next one by itself
+                                # false = do ONE trade, then pause until you press Start again
+  explain: false                # true = LLM explains analyses and trades in simple words
   manual_approval: false        # true = every buy waits for your OK (Telegram / dashboard)
   approval_timeout_minutes: 15  # unanswered requests expire (prices move)
 

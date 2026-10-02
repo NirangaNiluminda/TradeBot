@@ -40,6 +40,16 @@ class EmaCross(Strategy):
         out["ema_trend"] = ema(out["close"], self.trend) if self.trend else 0.0
         return out
 
+    def describe(self, history: Frame) -> str:
+        fast, slow = history["ema_fast"][-1], history["ema_slow"][-1]
+        close, trend = history["close"][-1], history["ema_trend"][-1]
+        side = "above" if fast > slow else "below"
+        trend_txt = "above" if close > trend else "below"
+        return (
+            f"Fast EMA is {side} slow EMA; price is {trend_txt} the long-term trend line. "
+            f"Buys when the fast EMA crosses above the slow EMA while price is above the trend."
+        )
+
     def signal(self, history: Frame, ctx: StrategyContext) -> Signal:
         if len(history) < 2:
             return Signal.hold("not enough data")

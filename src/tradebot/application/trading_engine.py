@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from tradebot.application.approvals import ApprovalQueue
 from tradebot.application.bot_control import BotControl
 from tradebot.application.event_bus import EventBus
-from tradebot.application.indicator_feed import IndicatorFeed
+from tradebot.application.indicator_feed import IndicatorFeed, MarketView
 from tradebot.domain.events import PositionClosed, PositionOpened, SignalGenerated, TradeRejected
 from tradebot.domain.models import (
     Action,
@@ -29,6 +29,7 @@ from tradebot.domain.models import (
     ExitReason,
     Fill,
     Position,
+    Signal,
     SymbolRules,
     Trade,
     TradeProposal,
@@ -80,11 +81,15 @@ class TradingEngine:
         self._roll_trading_day(now)
 
         view = self.feed.update(symbol, candle)
+        await self.decide(symbol, view, candle.close, now)
+
+    async def decide(self, symbol: str, view: MarketView, price: float, now: datetime) -> Signal:
+        """Ask the strategy what to do now, and do it. Returns the signal."""
         risk = self.market_risk.current()
         ctx = StrategyContext(in_position=symbol in self.positions, risk=risk)
         signal = self.strategy.signal(view.history, ctx)
         if signal.action is Action.HOLD:
-            return
+            return signal
         self.bus.publish(SignalGenerated(now, symbol, signal))
 
         if signal.action is Action.SELL and symbol in self.positions:
@@ -92,8 +97,9 @@ class TradingEngine:
         elif signal.action is Action.BUY and symbol not in self.positions:
             if not self.control.state.allows_new_trades:
                 self.bus.publish(TradeRejected(now, symbol, f"bot is {self.control.state.name}"))
-                return
-            await self._try_open(symbol, candle.close, view.atr, now, signal.reason)
+                return signal
+            await self._try_open(symbol, price, view.atr, now, signal.reason)
+        return signal
 
     async def sync_exits(self) -> None:
         """Record stop-loss / take-profit fills (called every candle, and more often when live)."""

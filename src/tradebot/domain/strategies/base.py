@@ -66,6 +66,10 @@ class Strategy(ABC):
         """Current parameters (for reports and the dashboard)."""
         return {}
 
+    def describe(self, history: Frame) -> str:
+        """Plain words: what is this strategy waiting for right now? (dashboard / LLM)"""
+        return ""
+
     @classmethod
     def from_params(cls, params: dict[str, Any], factory: StrategyFactory) -> Strategy:
         """Build from config. Composite strategies override this to build their children."""
@@ -96,12 +100,22 @@ class StrategyFactory:
         return decorator
 
     def create(self, name: str, params: dict[str, Any] | None = None) -> Strategy:
+        """Build a strategy. Two optional extra params work for every strategy:
+        `late_entry_window` and `late_entry_max_atr` (see late_entry.py)."""
         try:
             cls = self._registry[name]
         except KeyError:
             known = ", ".join(sorted(self._registry))
             raise ValueError(f"Unknown strategy '{name}'. Available: {known}") from None
-        return cls.from_params(dict(params or {}), self)
+        params = dict(params or {})
+        window = params.pop("late_entry_window", None)
+        max_atr = params.pop("late_entry_max_atr", 1.0)
+        strategy = cls.from_params(params, self)
+        if window:
+            from tradebot.domain.strategies.late_entry import LateEntry
+
+            strategy = LateEntry(strategy, int(window), float(max_atr))
+        return strategy
 
     def create_from_spec(self, spec: dict[str, Any]) -> Strategy:
         """Build from a nested config dict: {name: ..., params: {...}}."""

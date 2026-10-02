@@ -63,3 +63,27 @@ def test_frame_slicing_and_groups():
     assert list(f.group("a")["x"]) == [1.0, 2.0, 3.0]
     assert list(f.slice(1, 3).group("b")["x"]) == [5.0, 6.0]
     assert len(f.head(2)) == 2 and f.tail(1).group("a")["x"][-1] == 3.0
+
+
+def test_late_entry_never_looks_ahead_and_catches_recent_signal():
+    from tradebot.domain.models import Action
+
+    plain = strategy_factory.create("breakout", {"volume_mult": 1.0})
+    late = strategy_factory.create(
+        "breakout", {"volume_mult": 1.0, "late_entry_window": 3, "late_entry_max_atr": 5.0}
+    )
+    df = candles_to_frame(random_walk(900, seed=11))
+    full = Frame.from_dataframe(late.indicators(df))
+    plain_full = Frame.from_dataframe(plain.indicators(df))
+    flat = StrategyContext(in_position=False)
+    extra = 0
+    for i in range(late.warmup, len(df)):
+        a = late.signal(full.slice(max(0, i + 1 - SIGNAL_LOOKBACK), i + 1), flat)
+        if i % 9 == 0:  # no look-ahead: same answer from data up to i only
+            past = Frame.from_dataframe(late.indicators(df.iloc[: i + 1])).tail(SIGNAL_LOOKBACK)
+            assert late.signal(past, flat) == a
+        p = plain.signal(plain_full.slice(max(0, i + 1 - SIGNAL_LOOKBACK), i + 1), flat)
+        if a.action is Action.BUY and p.action is not Action.BUY:
+            assert "late entry" in a.reason
+            extra += 1
+    assert extra > 0  # it does catch signals the plain strategy only saw earlier

@@ -17,10 +17,11 @@ import uvicorn
 
 from tradebot.application.approvals import ApprovalQueue
 from tradebot.application.backtest import BacktestResult, BacktestRunner
-from tradebot.application.bot_control import BotControl
+from tradebot.application.bot_control import BotControl, Paused
 from tradebot.application.bot_facade import BotFacade
 from tradebot.application.event_bus import EventBus
 from tradebot.application.event_log import EventLog
+from tradebot.application.explainer import Explainer
 from tradebot.application.indicator_feed import PrecomputedFeed, RollingFeed
 from tradebot.application.live_trader import LiveTrader
 from tradebot.application.market_risk import StaticMarketRisk
@@ -120,6 +121,13 @@ def build_news_risk(
         stale_after_minutes=n.stale_after_minutes,
         fail_safe_level=RiskLevel(n.fail_safe_level),
     )
+
+
+def _try_build_llm(cfg: AppConfig, secrets: Secrets, http: httpx.AsyncClient) -> LLMPort | None:
+    try:
+        return build_llm(cfg, secrets, http)
+    except ValueError:
+        return None  # no LLM key: explanations simply stay unavailable
 
 
 def build_http(cfg: AppConfig) -> httpx.AsyncClient:
@@ -317,7 +325,12 @@ async def build_live_app(
     cfg: AppConfig, secrets: Secrets, mode: str, notifiers: list[NotifierPort], verbose: bool
 ) -> LiveApp:
     bus = EventBus()
-    control = BotControl(bus, manual=cfg.trading.manual_approval)
+    control = BotControl(
+        bus,
+        initial=None if cfg.trading.auto_start else Paused(),
+        manual=cfg.trading.manual_approval,
+    )
+    control.loop, control.explain = cfg.trading.loop, cfg.trading.explain
     approvals = ApprovalQueue(bus, cfg.trading.approval_timeout_minutes)
     exchange = build_exchange(cfg, secrets, mode)
     market_data, md_client = build_market_data(cfg)  # signals use real public market data
@@ -365,6 +378,11 @@ async def build_live_app(
         mode, cfg.risk.budget_usdt, engine, control, approvals, trader, repo, events, news,
         list(strategy_factory.available()), {cfg.strategy.name: cfg.strategy.params},
     )  # fmt: skip
+    explain_llm = news.llm if news else _try_build_llm(cfg, secrets, http)
+    if explain_llm is not None:
+        facade.explainer = Explainer(
+            explain_llm, bus, control, facade.snapshots, engine.market_risk.current
+        )
     telegram = (
         TelegramController(telegram_client, tg[1], facade, control, bus)
         if telegram_client and tg

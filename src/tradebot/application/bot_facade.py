@@ -13,7 +13,9 @@ from typing import Any
 from tradebot.application.approvals import ApprovalQueue
 from tradebot.application.bot_control import BotControl, InvalidTransition
 from tradebot.application.event_log import EventLog
+from tradebot.application.explainer import Explainer
 from tradebot.application.live_trader import LiveTrader
+from tradebot.application.market_analysis import MarketSnapshot, analyze
 from tradebot.application.metrics import trade_stats
 from tradebot.application.news_risk_service import NewsRiskService
 from tradebot.application.trading_engine import TradingEngine
@@ -34,6 +36,7 @@ class BotFacade:
         news: NewsRiskService | None,
         strategies: list[str],
         configured_params: dict[str, dict] | None = None,
+        explainer: Explainer | None = None,
     ) -> None:
         self.mode, self.budget = mode, budget
         self.engine, self.control, self.approvals = engine, control, approvals
@@ -41,6 +44,39 @@ class BotFacade:
         self.strategies = strategies
         # settings from config.yaml are reused when you switch back to that strategy
         self.configured_params = configured_params or {}
+        self.explainer = explainer
+
+    # ------------------------------------------------------------------ analysis
+    def snapshots(self) -> list[MarketSnapshot]:
+        e = self.engine
+        out = []
+        for symbol in self.trader.symbols:
+            snap = analyze(
+                symbol,
+                self.trader.recent_candles(symbol),
+                e.timeframe_delta,
+                e.strategy,
+                in_position=symbol in e.positions,
+                live_price=e.last_price.get(symbol),
+            )
+            if snap:
+                out.append(snap)
+        return out
+
+    async def analyze(self) -> str:
+        """Market picture for every coin (+ LLM explanation if Explain is on)."""
+        snaps = self.snapshots()
+        texts = await self.explainer.explain() if self.explainer else {}
+        lines = []
+        for s in snaps:
+            lines.append(
+                f"📊 {s.symbol} {s.price:,.2f} · 24h {s.change_24h_pct:+.1f}% · {s.trend} "
+                f"(strength {s.trend_strength:.0f}) · RSI {s.rsi:.0f} · {s.status}\n"
+                f"   {s.strategy_view}"
+            )
+            if s.symbol in texts:
+                lines.append(f"   💬 {texts[s.symbol]}")
+        return "\n".join(lines) or "Not enough data yet."
 
     # ------------------------------------------------------------------ read
     def state(self) -> dict[str, Any]:
@@ -73,6 +109,13 @@ class BotFacade:
             "mode": self.mode,
             "state": self.control.state.name,
             "manual_approval": self.control.manual_approval,
+            "loop": self.control.loop,
+            "explain": self.control.explain,
+            "analysis": [s.to_dict() for s in self.snapshots()],
+            "explanations": {
+                sym: {"time": t.isoformat(), "text": text}
+                for sym, (t, text) in (self.explainer.latest if self.explainer else {}).items()
+            },
             "strategy": {"name": e.strategy.name, "params": e.strategy.params()},
             "strategies": self.strategies,
             "timeframe": self.trader.timeframe,
@@ -134,7 +177,8 @@ class BotFacade:
         s = self.state()
         lines = [
             f"🤖 {s['mode'].upper()} · {s['state']} · "
-            f"{'MANUAL approval' if s['manual_approval'] else 'AUTO'}",
+            f"{'MANUAL approval' if s['manual_approval'] else 'AUTO'} · "
+            f"loop {'ON' if s['loop'] else 'OFF'} · explain {'ON' if s['explain'] else 'OFF'}",
             f"Strategy {s['strategy']['name']} · {s['timeframe']} · {', '.join(s['symbols'])}",
             f"Equity ${s['equity']:.2f} ({s['return_pct']:+.2f}%) · cash ${s['cash']:.2f}",
             f"News risk: {s['risk']['level']} — {s['risk']['reason']}",
@@ -163,6 +207,29 @@ class BotFacade:
         )
 
     # ------------------------------------------------------------------ control
+    async def start(self) -> str:
+        """Start trading: analyse the market now and act on it, then keep going."""
+        if not self.control.state.keeps_running:
+            return "The bot was stopped with the kill switch. Restart the program."
+        if not self.control.state.allows_new_trades:
+            self.control.resume("started by user")
+        results = await self.trader.evaluate_now()
+        if self.explainer:
+            self.explainer.explain_in_background(event="the user pressed Start")
+        return "▶ Trading started.\n" + "\n".join(results)
+
+    def set_loop(self, on: bool) -> str:
+        self.control.set_loop(on)
+        return (
+            "Loop ON: after each trade the bot looks for the next one."
+            if on
+            else ("Loop OFF: the bot pauses after the next trade finishes.")
+        )
+
+    def set_explain(self, on: bool) -> str:
+        self.control.set_explain(on)
+        return "Explanations ON (uses the LLM)." if on else "Explanations OFF."
+
     def pause(self) -> str:
         return self._transition(self.control.pause, "Paused: no new buys. Exits stay active.")
 

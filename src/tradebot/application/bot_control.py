@@ -57,13 +57,27 @@ class BotControl:
         self.state: BotState = initial or Running()
         # manual = every buy waits for your approval (Telegram / dashboard)
         self.manual_approval = manual
+        # loop = after a trade finishes, look for the next one; off = stop after one trade
+        self.loop = True
+        # explain = ask the LLM to explain analyses and trades in simple words
+        self.explain = False
 
     def set_manual_approval(self, manual: bool) -> None:
         self.manual_approval = manual
+        self._note("trade mode: " + ("MANUAL approval" if manual else "AUTO"))
+
+    def set_loop(self, on: bool) -> None:
+        self.loop = on
+        self._note("loop " + ("ON: keeps trading" if on else "OFF: stops after the next trade"))
+
+    def set_explain(self, on: bool) -> None:
+        self.explain = on
+        self._note("explanations " + ("ON" if on else "OFF"))
+
+    def _note(self, reason: str) -> None:
         if self.bus:
-            mode = "MANUAL approval" if manual else "AUTO"
             name = self.state.name
-            self.bus.publish(BotStateChanged(datetime.now(UTC), name, name, f"trade mode: {mode}"))
+            self.bus.publish(BotStateChanged(datetime.now(UTC), name, name, reason))
 
     def pause(self, reason: str = "paused by user") -> None:
         self._move(Paused(), reason, allowed_from=(Running,))

@@ -20,6 +20,7 @@ from tradebot.application.bot_control import BotControl
 from tradebot.application.indicator_feed import RollingFeed
 from tradebot.application.news_risk_service import NewsRiskService
 from tradebot.application.trading_engine import TradingEngine
+from tradebot.domain.events import PositionClosed
 from tradebot.domain.models import Candle, ExitReason
 from tradebot.domain.ports import MarketDataPort
 from tradebot.domain.strategies import StrategyFactory
@@ -52,14 +53,54 @@ class LiveTrader:
         self.strategy_factory = strategy_factory
         self._last_candle: dict[str, datetime] = {}
         self.started_at: datetime | None = None
+        self._tasks: set[asyncio.Task] = set()
+        engine.bus.subscribe(PositionClosed, self._on_trade_closed)
 
     async def start(self) -> None:
         """Load recent history so indicators are ready, and pick up where we left off."""
-        await self._load_history()
-        await self.engine.sync_exits()  # exits that filled while the bot was off
+        await self._with_retries(self._load_history)
+        await self._with_retries(self.engine.sync_exits)  # exits that filled while off
         if self.news:
             await self.news.refresh()
         self.started_at = datetime.now(UTC)
+        if self.control.state.allows_new_trades:
+            await self.evaluate_now()
+
+    async def evaluate_now(self) -> list[str]:
+        """Analyse every coin NOW (don't wait for the next candle) and act on it.
+
+        Used when you press Start, at start-up, and after a trade finishes in loop mode.
+        Returns one line per coin saying what was decided.
+        """
+        now, results = datetime.now(UTC), []
+        for symbol in self.symbols:
+            candles = self.feed.candles(symbol)
+            if not candles:
+                continue
+            last = candles[-1]
+            view = self.feed.update(symbol, last)
+            price = self.engine.last_price.get(symbol, last.close)
+            if view.atr == view.atr and abs(price - last.close) > view.atr:  # atr is not NaN
+                results.append(
+                    f"{symbol}: price moved a lot since the last candle closed — "
+                    "waiting for the next candle"
+                )
+                continue
+            signal = await self.engine.decide(symbol, view, price, now)
+            text = signal.reason or ("holding" if symbol in self.engine.positions else "no entry")
+            results.append(f"{symbol}: {signal.action.value} — {text}")
+        return results
+
+    def _on_trade_closed(self, event: PositionClosed) -> None:
+        if not self.control.state.keeps_running:
+            return
+        if not self.control.loop:
+            if self.control.state.allows_new_trades:
+                self.control.pause("trade finished, loop is OFF — press Start for the next one")
+            return
+        task = asyncio.get_running_loop().create_task(self.evaluate_now())  # look for the next
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def run(self) -> None:
         if self.started_at is None:
@@ -73,6 +114,23 @@ class LiveTrader:
         await asyncio.gather(*loops)
         # Loops only end when the bot was STOPPED (kill switch): close everything.
         await self.engine.close_all(ExitReason.MANUAL, datetime.now(UTC))
+
+    async def _with_retries(
+        self, job: Callable[[], Awaitable[object]], attempts: int = 6, first_wait: float = 5
+    ) -> None:
+        """Network blips at start-up shouldn't kill the bot: retry with growing pauses."""
+        for attempt in range(1, attempts + 1):
+            try:
+                await job()
+                return
+            except Exception as exc:
+                if attempt == attempts:
+                    raise
+                wait = first_wait * 2 ** (attempt - 1)
+                log.warning(
+                    "Start-up step failed (%s), retrying in %.0fs", type(exc).__name__, wait
+                )
+                await asyncio.sleep(wait)
 
     async def _every(
         self, seconds: float, job: Callable[[], Awaitable[object]], first_wait: bool = False

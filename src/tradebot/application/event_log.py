@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from tradebot.application.approvals import ApprovalRequested, ApprovalResolved
 from tradebot.application.bot_control import BotStateChanged
 from tradebot.application.event_bus import EventBus
+from tradebot.application.explainer import ExplanationReady
 from tradebot.application.notifications import describe_closed, describe_opened, describe_risk
 from tradebot.domain.events import (
     PositionClosed,
@@ -39,6 +40,7 @@ class EventLog:
             ApprovalResolved,
             lambda e: add("approval", f"Request {e.request.id} {e.outcome}"),
         )
+        bus.subscribe(ExplanationReady, lambda e: add("explain", f"💬 {e.symbol}: {e.text}"))
 
     def _add(self, kind: str, text: str) -> None:
         self.lines.append((datetime.now(UTC), kind, text))

@@ -67,6 +67,12 @@ class RegimeSwitch(Strategy):
         own = pd.DataFrame({"adx": adx(df, self.adx_period)}, index=df.index)
         return _child_frames(df, self.children, own)
 
+    def describe(self, history: Frame) -> str:
+        strength = history[(_OWN, "adx")][-1]
+        regime = "trend" if strength >= self.threshold else "range"
+        child = self.children[regime].describe(history.group(regime))
+        return f"Trend strength (ADX) {strength:.0f} -> using the {regime} strategy. {child}"
+
     def signal(self, history: Frame, ctx: StrategyContext) -> Signal:
         strength = history[(_OWN, "adx")][-1]
         if pd.isna(strength):
@@ -118,6 +124,10 @@ class Ensemble(Strategy):
             child.signal(frame.head(n - back), ctx).action
             for back in range(min(self.window, n - 1))
         ]
+
+    def describe(self, history: Frame) -> str:
+        parts = [c.describe(history.group(k)) for k, c in self.children.items()]
+        return f"Needs {self.min_votes} of {len(parts)} members to agree. " + " | ".join(parts)
 
     def signal(self, history: Frame, ctx: StrategyContext) -> Signal:
         # Holding a coin -> only exits matter. Not holding -> only entries matter.
