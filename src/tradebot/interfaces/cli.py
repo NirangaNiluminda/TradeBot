@@ -7,6 +7,8 @@ uv run tradebot backtest -s breakout    backtest another strategy
 uv run tradebot compare                 backtest ALL strategies and rank them
 uv run tradebot optimize                honest walk-forward test of ALL strategies
 uv run tradebot optimize -s ensemble    ...of one strategy, with step-by-step details
+uv run tradebot news                    latest headlines
+uv run tradebot risk                    LLM market-risk check from the news
 """
 
 from __future__ import annotations
@@ -27,13 +29,14 @@ from rich.table import Table
 
 from tradebot import bootstrap
 from tradebot.application.backtest import BacktestResult
+from tradebot.application.event_bus import EventBus
 from tradebot.application.metrics import PerformanceReport, evaluate
 from tradebot.application.optimizer import (
     WalkForwardOptimizer,
     WalkForwardResult,
     build_candidates,
 )
-from tradebot.config import AppConfig, load_config
+from tradebot.config import AppConfig, Secrets, load_config
 from tradebot.domain.strategies import strategy_factory
 
 app = typer.Typer(
@@ -320,6 +323,65 @@ def _print_walk_forward_summary(
         "[dim]Copy into config/config.yaml only if the verdict is 'promising'. "
         "Test periods are short — results vary a lot between market phases.[/]"
     )
+
+
+@app.command()
+def news(config: ConfigOpt = None) -> None:
+    """Show the latest headlines the LLM will read."""
+    cfg = _load(config, None, None, None)
+
+    async def main() -> None:
+        async with bootstrap.build_http(cfg) as http:
+            service = bootstrap.build_news_risk(cfg, Secrets(), http, EventBus())
+            items = await service.collect_news()
+        table = Table(title=f"{len(items)} headlines from the last {cfg.news.lookback_hours:g}h")
+        for col in ["age", "source", "headline"]:
+            table.add_column(col)
+        now = datetime.now(UTC)
+        for item in items:
+            age = (now - item.published).total_seconds() / 3600
+            table.add_row(f"{age:.1f}h", item.source, item.title)
+        console.print(table)
+
+    asyncio.run(main())
+
+
+@app.command()
+def risk(
+    provider: Annotated[
+        str | None, typer.Option("--provider", "-p", help="Use only this LLM, e.g. groq")
+    ] = None,
+    config: ConfigOpt = None,
+) -> None:
+    """Ask the LLM for the current market risk level based on the news."""
+    cfg = _load(config, None, None, None)
+    if provider:
+        cfg.llm.providers = [provider]
+
+    async def main() -> None:
+        async with bootstrap.build_http(cfg) as http:
+            service = bootstrap.build_news_risk(cfg, Secrets(), http, EventBus())
+            with console.status("Reading news and asking the LLM..."):
+                assessment = await service.refresh()
+        colour = {"NORMAL": "green", "CAUTION": "yellow", "DANGER": "red"}[assessment.level.value]
+        console.rule("[bold]Market risk from news")
+        console.print(f"Risk level:  [bold {colour}]{assessment.level.value}[/]")
+        console.print(f"Reason:      {assessment.reason}")
+        console.print(
+            f"Sentiment:   {assessment.sentiment:+.2f}  (-1 very negative … +1 very positive)"
+        )
+        if assessment.affected_coins:
+            console.print(f"Coins:       {', '.join(assessment.affected_coins)}")
+        console.print(f"Answered by: {assessment.source}")
+        console.print(f"Headlines:   {len(service.last_headlines)} read")
+        effect = {
+            "NORMAL": "trade normally",
+            "CAUTION": "half-size trades with tighter stops (at $10 this means: skip new buys)",
+            "DANGER": "no new buys",
+        }[assessment.level.value]
+        console.print(f"[dim]Effect on the bot: {effect}[/]")
+
+    asyncio.run(main())
 
 
 # ---------------------------------------------------------------------------- helpers

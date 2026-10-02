@@ -175,3 +175,18 @@ class RiskAssessment:
 
     level: RiskLevel = RiskLevel.NORMAL
     reason: str = "no news analysis configured"
+    sentiment: float = 0.0  # -1 very negative ... +1 very positive
+    affected_coins: tuple[str, ...] = ()
+    source: str = "static"  # which LLM provider produced it
+    time: datetime | None = None  # when it was produced
+
+
+@dataclass(frozen=True, slots=True)
+class NewsItem:
+    """One headline from a news source."""
+
+    title: str
+    source: str
+    published: datetime
+    summary: str = ""
+    url: str = ""

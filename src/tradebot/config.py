@@ -66,6 +66,38 @@ class BacktestConfig(BaseModel):
         return start, end
 
 
+class NewsConfig(BaseModel):
+    enabled: bool = True
+    refresh_minutes: float = Field(20, ge=5)
+    lookback_hours: float = Field(12, gt=0)
+    max_headlines: int = Field(40, ge=5, le=100)
+    stale_after_minutes: float = Field(90, gt=0)
+    fail_safe_level: Literal["NORMAL", "CAUTION", "DANGER"] = "CAUTION"
+    fear_greed: bool = True
+    rss_feeds: dict[str, str] = Field(
+        default_factory=lambda: {
+            "coindesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+            "cointelegraph": "https://cointelegraph.com/rss",
+            "decrypt": "https://decrypt.co/feed",
+        }
+    )
+
+
+class LLMConfig(BaseModel):
+    providers: list[str] = ["gemini", "groq"]  # order = fallback order
+    models: dict[str, str] = Field(
+        default_factory=lambda: {
+            "gemini": "gemini-3.5-flash",
+            "groq": "openai/gpt-oss-120b",
+            "openai": "gpt-5-mini",
+            "openrouter": "openai/gpt-oss-120b",
+        }
+    )
+    timeout_seconds: float = Field(60, gt=0)
+    min_interval_seconds: float = Field(5, ge=0)
+    cache_minutes: float = Field(10, ge=0)
+
+
 class DataConfig(BaseModel):
     dir: Path = Path("data")
 
@@ -79,6 +111,8 @@ class AppConfig(BaseModel):
     strategy: StrategyConfig = StrategyConfig()
     risk: RiskConfig = RiskConfig()
     backtest: BacktestConfig = BacktestConfig()
+    news: NewsConfig = NewsConfig()
+    llm: LLMConfig = LLMConfig()
     data: DataConfig = DataConfig()
 
 
@@ -91,6 +125,18 @@ class Secrets(BaseSettings):
     binance_testnet_api_secret: SecretStr | None = None
     binance_api_key: SecretStr | None = None
     binance_api_secret: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
+    groq_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
+    openrouter_api_key: SecretStr | None = None
+    telegram_bot_token: SecretStr | None = None
+    telegram_chat_id: str | None = None
+
+    def llm_key(self, provider: str) -> str | None:
+        """API key for an LLM provider, e.g. 'gemini' -> GEMINI_API_KEY (None if missing)."""
+        value = getattr(self, f"{provider}_api_key", None)
+        secret = value.get_secret_value().strip() if value else ""
+        return secret or None
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> AppConfig:

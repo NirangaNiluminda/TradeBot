@@ -10,15 +10,18 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 
+import httpx
+
 from tradebot.application.backtest import BacktestResult, BacktestRunner
 from tradebot.application.event_bus import EventBus
 from tradebot.application.indicator_feed import PrecomputedFeed
 from tradebot.application.market_risk import StaticMarketRisk
+from tradebot.application.news_risk_service import NewsRiskService
 from tradebot.application.optimizer import BacktestJob
 from tradebot.application.trading_engine import TradingEngine
-from tradebot.config import AppConfig, RiskConfig
-from tradebot.domain.models import Candle, SymbolRules
-from tradebot.domain.ports import MarketDataPort
+from tradebot.config import AppConfig, RiskConfig, Secrets
+from tradebot.domain.models import Candle, RiskLevel, SymbolRules
+from tradebot.domain.ports import LLMPort, MarketDataPort, NewsSourcePort
 from tradebot.domain.risk import (
     AtrExitLevels,
     DailyLossLimit,
@@ -33,8 +36,11 @@ from tradebot.domain.risk import (
 from tradebot.domain.strategies import Strategy, strategy_factory
 from tradebot.domain.timeframes import timeframe_delta
 from tradebot.infrastructure.exchange.simulated import SimulatedExchange
+from tradebot.infrastructure.llm import factory as llm_factory
 from tradebot.infrastructure.market_data.cached import CachedMarketData
 from tradebot.infrastructure.market_data.ccxt_market_data import CcxtMarketData
+from tradebot.infrastructure.news.fear_greed import FearGreedSource
+from tradebot.infrastructure.news.rss import RssNewsSource
 
 
 def build_market_data(cfg: AppConfig) -> tuple[MarketDataPort, CcxtMarketData]:
@@ -65,6 +71,42 @@ def build_risk_manager(risk: RiskConfig) -> RiskManager:
             MinOrderSize(),
         ]
     )
+
+
+def build_llm(cfg: AppConfig, secrets: Secrets, http: httpx.AsyncClient) -> LLMPort:
+    c = cfg.llm
+    providers = [(p, c.models.get(p, ""), secrets.llm_key(p)) for p in c.providers]
+    return llm_factory.build_llm(providers, http, c.min_interval_seconds, c.cache_minutes * 60)
+
+
+def build_news_sources(cfg: AppConfig, http: httpx.AsyncClient) -> list[NewsSourcePort]:
+    sources: list[NewsSourcePort] = [
+        RssNewsSource(name, url, http) for name, url in cfg.news.rss_feeds.items()
+    ]
+    if cfg.news.fear_greed:
+        sources.append(FearGreedSource(http))
+    return sources
+
+
+def build_news_risk(
+    cfg: AppConfig, secrets: Secrets, http: httpx.AsyncClient, bus: EventBus
+) -> NewsRiskService:
+    n = cfg.news
+    return NewsRiskService(
+        sources=build_news_sources(cfg, http),
+        llm=build_llm(cfg, secrets, http),
+        bus=bus,
+        coins=cfg.market.symbols,
+        lookback_hours=n.lookback_hours,
+        max_headlines=n.max_headlines,
+        stale_after_minutes=n.stale_after_minutes,
+        fail_safe_level=RiskLevel(n.fail_safe_level),
+    )
+
+
+def build_http(cfg: AppConfig) -> httpx.AsyncClient:
+    """One shared HTTP client for news + LLM calls. Close it when done."""
+    return httpx.AsyncClient(timeout=cfg.llm.timeout_seconds, follow_redirects=True)
 
 
 def build_strategy(name: str, params: dict | None = None) -> Strategy:

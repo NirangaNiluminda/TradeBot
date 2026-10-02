@@ -55,3 +55,28 @@ backtest:
 
 data:
   dir: data
+
+# ── News + LLM risk gate (Phase 2) ──────────────────────────────
+news:
+  enabled: true
+  refresh_minutes: 20       # how often to re-read the news
+  lookback_hours: 12        # only headlines from the last 12 hours
+  max_headlines: 40
+  stale_after_minutes: 90   # older analysis is ignored -> fail-safe level
+  fail_safe_level: CAUTION  # used when news/LLM is unavailable (be careful, not blind)
+  fear_greed: true
+  rss_feeds:
+    coindesk: https://www.coindesk.com/arc/outboundfeeds/rss/
+    cointelegraph: https://cointelegraph.com/rss
+    decrypt: https://decrypt.co/feed
+
+llm:
+  # Order = fallback order. Switching provider = editing this line.
+  # Available: gemini, groq, openai, openrouter (keys go in .env, e.g. GROQ_API_KEY)
+  providers: [gemini, groq]
+  models:
+    gemini: gemini-3.5-flash
+    groq: openai/gpt-oss-120b
+  timeout_seconds: 60
+  min_interval_seconds: 5   # pause between calls to stay inside free-tier limits
+  cache_minutes: 10         # same headlines within 10 min -> reuse the answer
