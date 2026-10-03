@@ -398,7 +398,10 @@ def risk(
 
 
 ModeOpt = Annotated[
-    str | None, typer.Option("--mode", "-m", help="testnet (fake money) or live (REAL money)")
+    str | None,
+    typer.Option(
+        "--mode", "-m", help="paper (real prices, simulated orders), testnet, or live (REAL money)"
+    ),
 ]
 
 

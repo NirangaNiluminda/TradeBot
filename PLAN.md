@@ -1,6 +1,6 @@
 # Crypto Trading Bot — Project Plan
 
-> Status: **Phases 1–4 complete. Next: Phase 5 — run on testnet for 2–4 weeks and evaluate (`tradebot trades`)**
+> Status: **Running 24/7 on Oracle Cloud in paper mode since 2026-10-03. Next: collect ~30 trades, then decide on going live with $10 (see docs/DEPLOY.md)**
 > Last updated: 2026-10-02
 
 ---

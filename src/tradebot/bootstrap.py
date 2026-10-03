@@ -32,7 +32,13 @@ from tradebot.application.recorder import TradeRecorder, ledger_cash
 from tradebot.application.trading_engine import TradingEngine
 from tradebot.config import AppConfig, RiskConfig, Secrets
 from tradebot.domain.models import Candle, RiskLevel, SymbolRules
-from tradebot.domain.ports import LLMPort, MarketDataPort, NewsSourcePort, NotifierPort
+from tradebot.domain.ports import (
+    ExchangePort,
+    LLMPort,
+    MarketDataPort,
+    NewsSourcePort,
+    NotifierPort,
+)
 from tradebot.domain.risk import (
     AtrExitLevels,
     DailyLossLimit,
@@ -47,6 +53,7 @@ from tradebot.domain.risk import (
 from tradebot.domain.strategies import Strategy, strategy_factory
 from tradebot.domain.timeframes import timeframe_delta
 from tradebot.infrastructure.exchange.ccxt_exchange import CcxtExchange
+from tradebot.infrastructure.exchange.paper import PaperExchange
 from tradebot.infrastructure.exchange.simulated import SimulatedExchange
 from tradebot.infrastructure.llm import factory as llm_factory
 from tradebot.infrastructure.market_data.cached import CachedMarketData
@@ -257,7 +264,7 @@ class LiveApp:
     control: BotControl
     bus: EventBus
     repo: SqliteTradeRepository
-    exchange: CcxtExchange
+    exchange: ExchangePort
     news: NewsRiskService | None
     facade: BotFacade
     telegram: TelegramController | None
@@ -332,10 +339,24 @@ async def build_live_app(
     )
     control.loop, control.explain = cfg.trading.loop, cfg.trading.explain
     approvals = ApprovalQueue(bus, cfg.trading.approval_timeout_minutes)
-    exchange = build_exchange(cfg, secrets, mode)
     market_data, md_client = build_market_data(cfg)  # signals use real public market data
     http = build_http(cfg)
     repo = SqliteTradeRepository(database_path(cfg, mode))
+    if mode == "paper":
+        exchange: ExchangePort = PaperExchange(
+            md_client,  # uncached: real 1-minute candles straight from Binance
+            await load_symbol_rules(market_data, cfg.market.symbols),
+            starting_quote=ledger_cash(
+                cfg.risk.budget_usdt, repo.load_trades(), repo.load_positions()
+            ),
+            quote_asset=cfg.exchange.quote_asset,
+            fee_pct=cfg.backtest.fee_pct,
+            slippage_pct=cfg.backtest.slippage_pct,
+        )
+        closers = [md_client.close, http.aclose]
+    else:
+        exchange = build_exchange(cfg, secrets, mode)
+        closers = [exchange.close, md_client.close, http.aclose]
     TradeRecorder(repo, bus)
     events = EventLog(bus)
 
@@ -389,6 +410,5 @@ async def build_live_app(
         else None
     )
     return LiveApp(
-        trader, engine, control, bus, repo, exchange, news, facade, telegram,
-        [exchange.close, md_client.close, http.aclose],
+        trader, engine, control, bus, repo, exchange, news, facade, telegram, closers,
     )  # fmt: skip

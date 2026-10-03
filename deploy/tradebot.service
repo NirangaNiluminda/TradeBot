@@ -1,0 +1,22 @@
+# systemd service: keeps the bot running 24/7 on the server.
+# Installed by deploy/deploy.sh to /etc/systemd/system/tradebot.service
+[Unit]
+Description=tradebot (Binance spot trading bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tradebot
+Environment=PYTHONUNBUFFERED=1 COLUMNS=120 TERM=dumb
+# --mode paper: REAL prices, simulated orders (see infrastructure/exchange/paper.py)
+# --start: trade without waiting for the Start button (nobody is watching the server)
+ExecStart=/home/ubuntu/.local/bin/uv run --frozen --no-dev tradebot run --mode paper --start --quiet
+# Ctrl+C-style stop: open positions keep their stop-loss/take-profit on Binance
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

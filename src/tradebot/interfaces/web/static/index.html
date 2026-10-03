@@ -218,7 +218,8 @@ const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 function render(s) {
   state = s;
-  badge($("mode"), s.mode === "live" ? "var(--critical)" : "var(--accent)", "", s.mode.toUpperCase());
+  const modeColor = { live: "var(--critical)", paper: "var(--good)" }[s.mode] || "var(--accent)";
+  badge($("mode"), modeColor, "", s.mode.toUpperCase());
   const stateColor = { RUNNING: "var(--good)", PAUSED: "var(--warning)", STOPPED: "var(--critical)" }[s.state];
   badge($("state"), stateColor, "", s.state + " · " + (s.manual_approval ? "manual approval" : "auto"));
   const [rc, ri, rl] = RISK[s.risk.level];

@@ -20,7 +20,7 @@ DEFAULT_CONFIG = ROOT / "config" / "config.yaml"
 
 class ExchangeConfig(BaseModel):
     name: str = "binance"
-    mode: Literal["backtest", "testnet", "live"] = "backtest"
+    mode: Literal["backtest", "paper", "testnet", "live"] = "backtest"
     quote_asset: str = "USDT"
 
 

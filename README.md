@@ -59,7 +59,10 @@ Telegram has the same controls: `/trade`, `/analyze`, `/loop on|off`, `/explain 
 Ctrl+C stops the program, but open positions **keep their stop-loss and
 take-profit on Binance** (an OCO order), and the bot picks them up again on restart.
 
-Real money (only after the testnet results are good):
+Modes: `--mode paper` (real prices, simulated orders: best for judging the strategy),
+`--mode testnet` (real orders with fake money: proves the order mechanics), `--mode live`.
+
+Real money (only after the paper results are good):
 `uv run tradebot run --mode live --confirm-real-money`. It refuses to start if the API
 key is allowed to withdraw funds.
 
@@ -80,4 +83,4 @@ uv run ruff format src  # format
 - [x] Phase 4 — Telegram + web dashboard + manual approval
 - [ ] Phase 5 — evaluate on testnet
 - [ ] Phase 6 — live with $10
-- [ ] Phase 7 — Docker / VPS
+- [x] Phase 7 — 24/7 on an Oracle Cloud server, paper mode (see docs/DEPLOY.md)
