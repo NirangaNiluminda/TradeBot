@@ -7,6 +7,7 @@ uv run tradebot backtest -s breakout    backtest another strategy
 uv run tradebot compare                 backtest ALL strategies and rank them
 uv run tradebot optimize                honest walk-forward test of ALL strategies
 uv run tradebot optimize -s ensemble    ...of one strategy, with step-by-step details
+uv run tradebot grid-backtest           honest walk-forward test of the GRID bot (1m prices)
 uv run tradebot news                    latest headlines
 uv run tradebot risk                    LLM market-risk check from the news
 uv run tradebot run                     start trading on the testnet (Ctrl+C to stop)
@@ -38,6 +39,7 @@ from tradebot import bootstrap
 from tradebot.application.approvals import ApprovalRequested
 from tradebot.application.backtest import BacktestResult
 from tradebot.application.event_bus import EventBus
+from tradebot.application.grid_backtest import walk_forward
 from tradebot.application.metrics import PerformanceReport, evaluate, trade_stats
 from tradebot.application.optimizer import (
     WalkForwardOptimizer,
@@ -46,6 +48,7 @@ from tradebot.application.optimizer import (
 )
 from tradebot.application.recorder import ledger_cash
 from tradebot.config import AppConfig, Secrets, load_config
+from tradebot.domain.grid import GridConfig
 from tradebot.domain.models import ExitReason
 from tradebot.domain.strategies import strategy_factory
 from tradebot.infrastructure.notify.console import ConsoleNotifier
@@ -335,6 +338,82 @@ def _print_walk_forward_summary(
     console.print(
         "[dim]Copy into config/config.yaml only if the verdict is 'promising'. "
         "Test periods are short — results vary a lot between market phases.[/]"
+    )
+
+
+@app.command("grid-backtest")
+def grid_backtest(
+    symbols: SymbolsOpt = None,
+    days: Annotated[
+        int, typer.Option("--days", "-d", help="History to use (1-minute candles)")
+    ] = 365,
+    budget: Annotated[float, typer.Option(help="Paper budget per coin (USDT)")] = 100.0,
+    train_days: Annotated[int, typer.Option(help="Training window per step")] = 60,
+    test_days: Annotated[int, typer.Option(help="Unseen test window per step")] = 30,
+    config: ConfigOpt = None,
+) -> None:
+    """Honest walk-forward test of the GRID bot on real 1-minute prices."""
+    cfg = _load(config, None, symbols, None)
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+
+    async def load() -> tuple[dict, dict]:
+        market_data, client = bootstrap.build_market_data(cfg)
+        try:
+            candles = {
+                s: await market_data.fetch_candles(s, "1m", start, end) for s in cfg.market.symbols
+            }
+            return candles, await bootstrap.load_symbol_rules(market_data, cfg.market.symbols)
+        finally:
+            await client.close()
+
+    with console.status("Loading 1-minute candles (first run downloads a lot, be patient)..."):
+        candles, rules = asyncio.run(load())
+
+    base = GridConfig(budget=budget, fee_pct=cfg.backtest.fee_pct)
+    summary = Table(title=f"GRID walk-forward on UNSEEN data — ${budget:.0f} per coin, 1m prices")
+    for col in [
+        "coin",
+        "test return",
+        "buy & hold",
+        "cycles",
+        "cycles/day",
+        "stop-outs",
+        "steps won",
+        "worst drop",
+        "cycle profit $",
+        "stop-loss $",
+        "fees $",
+    ]:
+        summary.add_column(col)
+    for symbol, series in candles.items():
+        with console.status(f"Testing grid on {symbol}...") as status:
+            wf = walk_forward(
+                series, rules[symbol], base, train_days, test_days,
+                on_progress=lambda m, s=symbol: status.update(f"{s}: {m}"),
+            )  # fmt: skip
+        steps = Table(title=f"{symbol} — each step: best grid on training data → unseen test")
+        for col in ["test period", "chosen grid", "TEST", "buy & hold", "cycles", "stops"]:
+            steps.add_column(col)
+        for f in wf.folds:
+            steps.add_row(
+                f"{f.test_start:%Y-%m-%d} → {f.test_end:%Y-%m-%d}", f.chosen.label(),
+                _pct(f.test.return_pct), _pct(f.test.buy_and_hold_pct), str(f.test.cycles),
+                str(f.test.stopouts),
+            )  # fmt: skip
+        console.print(steps)
+        days_tested = sum((f.test_end - f.test_start).days for f in wf.folds) or 1
+        summary.add_row(
+            symbol, _pct(wf.test_return_pct), _pct(wf.buy_and_hold_pct), str(wf.cycles),
+            f"{wf.cycles / days_tested:.1f}", str(wf.stopouts),
+            f"{wf.folds_won}/{len(wf.folds)}", f"-{wf.worst_drawdown_pct:.1f}%",
+            f"{wf.cycle_profit:+.2f}", f"{wf.stop_loss_total:+.2f}", f"{wf.fees:.2f}",
+        )  # fmt: skip
+    console.print(summary)
+    console.print(
+        "[dim]Cycle profit = small wins from buy-low/sell-high. Stop-loss $ = losses when the "
+        "price fell below the ladder. Coins still held at the end of a step are valued at the "
+        "last price.[/]"
     )
 
 

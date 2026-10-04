@@ -5,6 +5,7 @@ No API keys needed: candles and trading rules are public information.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import ccxt.async_support as ccxt
@@ -33,7 +34,7 @@ class CcxtMarketData:
         now_ms = _ms(datetime.now(UTC))
         candles: list[Candle] = []
         while since < end_ms:
-            rows = await self._exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=_PAGE)
+            rows = await self._page(symbol, timeframe, since)
             if not rows:
                 break
             for t, o, h, low, c, v in rows:
@@ -45,6 +46,17 @@ class CcxtMarketData:
                 break
             since = next_since
         return candles
+
+    async def _page(self, symbol: str, timeframe: str, since: int, attempts: int = 5) -> list:
+        """One page of candles; retries network hiccups (long downloads = many pages)."""
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self._exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=_PAGE)
+            except ccxt.NetworkError:
+                if attempt == attempts:
+                    raise
+                await asyncio.sleep(2 * attempt)
+        return []
 
     async def fetch_symbol_rules(self, symbol: str) -> SymbolRules:
         if not self._markets_loaded:
