@@ -99,6 +99,15 @@ BTC/ETH 5 years +52% → +21–51%; unseen coins SOL/BNB/XRP +42% → **−10% t
 Chasing old signals buys worse entries, so "Start" only acts on the latest closed candle. The
 option still exists (`late_entry_window` in strategy params) for your own experiments.
 
+**Tested and rejected: short-term trading and grid bots (2026-10-03/04).**
+- 15m and 1h candles (walk-forward, BTC+ETH): every strategy lost (−12% to −59%). Example:
+  breakout on 1h made +$1.39 before fees but paid $5.48 in fees.
+- Grid bot (`tradebot grid-backtest`, 1 year of 1-minute prices, $100 per coin, walk-forward):
+  BTC −5.9% (holding −10.6%), ETH −27.2% (holding −12.7%). Small buy-low/sell-high wins
+  (+$26 / +$41) were wiped out when prices fell below the ladder (stop-losses −$9 / −$47).
+- A "fast" grid that trades ~10 times a day (±2%, 16 levels): BTC **−80%**, ETH **−94%** in a
+  year. Even with zero fees it lost 36–57%: grids keep buying on the way down.
+
 **Common traps:**
 - **Overfitting:** tweaking settings until the past looks perfect. The future won't match.
   Always check results on a *different* period (e.g. `--days 730` vs `--days 365`).
