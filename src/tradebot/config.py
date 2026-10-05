@@ -37,7 +37,8 @@ class StrategyConfig(BaseModel):
 class RiskConfig(BaseModel):
     budget_usdt: float = Field(10, gt=0)
     position_size_pct: float = Field(95, gt=0, le=100)
-    exit_mode: Literal["atr", "percent"] = "atr"
+    exit_mode: Literal["atr", "percent", "stop_only"] = "atr"  # stop_only: no take-profit
+    split_budget: bool = False  # True: budget / max_open_positions per position
     # ATR mode: distances measured in "typical candle moves"
     stop_atr_mult: float = Field(2.0, gt=0)
     take_profit_atr_mult: float = Field(4.0, gt=0)
@@ -113,8 +114,14 @@ class DashboardConfig(BaseModel):
     port: int = 8000
 
 
+class TelegramConfig(BaseModel):
+    commands: bool = True  # only ONE bot per Telegram token may receive commands
+    label: str = ""  # prefix for this bot's messages, e.g. "TREND"
+
+
 class DataConfig(BaseModel):
     dir: Path = Path("data")
+    database: str | None = None  # default: tradebot_<mode>.sqlite
 
     def resolved(self) -> Path:
         return self.dir if self.dir.is_absolute() else ROOT / self.dir
@@ -129,6 +136,7 @@ class AppConfig(BaseModel):
     news: NewsConfig = NewsConfig()
     llm: LLMConfig = LLMConfig()
     trading: TradingConfig = TradingConfig()
+    telegram: TelegramConfig = TelegramConfig()
     dashboard: DashboardConfig = DashboardConfig()
     data: DataConfig = DataConfig()
 

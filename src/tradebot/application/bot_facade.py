@@ -6,6 +6,7 @@ to know about the engine, feed, approval queue, news service or database.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
@@ -95,7 +96,7 @@ class BotFacade:
                     "pnl": (price - p.entry_price) * p.amount - p.entry_fee,
                     "pnl_pct": (price / p.entry_price - 1) * 100,
                     "stop_loss": p.stop_loss,
-                    "take_profit": p.take_profit,
+                    "take_profit": p.take_profit if math.isfinite(p.take_profit) else None,
                     "since": p.entry_time.isoformat(),
                 }
             )
@@ -186,7 +187,7 @@ class BotFacade:
         for p in s["positions"]:
             lines.append(
                 f"📦 {p['symbol']} {p['pnl_pct']:+.2f}% (stop {p['stop_loss']:,.2f}, "
-                f"target {p['take_profit']:,.2f})"
+                + (f"target {p['take_profit']:,.2f})" if p["take_profit"] else "no target)")
             )
         if not s["positions"]:
             lines.append("No open positions.")

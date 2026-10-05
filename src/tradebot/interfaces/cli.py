@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import logging
+import math
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -708,7 +709,8 @@ def status(mode: ModeOpt = None, config: ConfigOpt = None) -> None:
             table.add_row(
                 p.symbol, f"{p.entry_time:%m-%d %H:%M}", f"{p.entry_price:,.2f}",
                 f"{now_px:,.2f}", _pct((now_px / p.entry_price - 1) * 100),
-                f"{p.stop_loss:,.2f}", f"{p.take_profit:,.2f}",
+                f"{p.stop_loss:,.2f}",
+                f"{p.take_profit:,.2f}" if math.isfinite(p.take_profit) else "trend exit",
             )  # fmt: skip
         console.print(table)
     else:

@@ -12,6 +12,7 @@ Binance details handled here so the rest of the bot doesn't need to know them:
 from __future__ import annotations
 
 import logging
+import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -25,6 +26,7 @@ log = logging.getLogger(__name__)
 
 # Rough fee rate when Binance charges the fee in BNB (we can't price BNB cheaply here).
 _BNB_FEE_RATE = 0.00075
+_SINGLE = "single:"  # exit id prefix for a lone stop-loss order (no take-profit)
 
 
 class CcxtExchange:
@@ -75,6 +77,16 @@ class CcxtExchange:
         self, symbol: str, amount: float, stop_loss: float, take_profit: float
     ) -> str:
         await self._load()
+        if not math.isfinite(take_profit):
+            # No take-profit (trend strategies): a single stop-loss order instead of an OCO.
+            order = await self._call(
+                self._ex.create_order, symbol, "STOP_LOSS", "sell",
+                float(self._ex.amount_to_precision(symbol, amount)), None,
+                {"stopPrice": self._ex.price_to_precision(symbol, stop_loss)},
+            )  # fmt: skip
+            order_id = f"{_SINGLE}{order['id']}"
+            self._exits[symbol] = (order_id, amount)
+            return order_id
         params = {
             "symbol": self._ex.market(symbol)["id"],
             "side": "SELL",
@@ -99,9 +111,12 @@ class CcxtExchange:
             return
         await self._load()
         try:
-            await self._ex.privateDeleteOrderList(
-                {"symbol": self._ex.market(symbol)["id"], "orderListId": entry[0]}
-            )
+            if entry[0].startswith(_SINGLE):
+                await self._ex.cancel_order(entry[0].removeprefix(_SINGLE), symbol)
+            else:
+                await self._ex.privateDeleteOrderList(
+                    {"symbol": self._ex.market(symbol)["id"], "orderListId": entry[0]}
+                )
         except ccxt.ExchangeError:
             # Probably filled a moment ago — record that fill instead of selling twice.
             fill = await self._filled_exit(symbol, entry[0])
@@ -111,6 +126,15 @@ class CcxtExchange:
     async def fetch_exit_fills(self) -> list[Fill]:
         fills, self._pending_fills = self._pending_fills, []
         for symbol, (list_id, _) in list(self._exits.items()):
+            if list_id.startswith(_SINGLE):
+                order = await self._ex.fetch_order(list_id.removeprefix(_SINGLE), symbol)
+                if order["status"] in ("closed", "canceled", "expired", "rejected"):
+                    del self._exits[symbol]
+                    if order["status"] == "closed":
+                        fills.append(
+                            await self._to_fill(symbol, Side.SELL, order, ExitReason.STOP_LOSS)
+                        )
+                continue
             status = await self._ex.privateGetOrderList({"orderListId": list_id})
             if status["listOrderStatus"] != "ALL_DONE":
                 continue
@@ -135,6 +159,11 @@ class CcxtExchange:
     async def _filled_exit(
         self, symbol: str, list_id: str, status: dict[str, Any] | None = None
     ) -> Fill | None:
+        if list_id.startswith(_SINGLE):
+            order = await self._ex.fetch_order(list_id.removeprefix(_SINGLE), symbol)
+            if order["status"] == "closed":
+                return await self._to_fill(symbol, Side.SELL, order, ExitReason.STOP_LOSS)
+            return None
         status = status or await self._ex.privateGetOrderList({"orderListId": list_id})
         for leg in status.get("orders", []):
             order = await self._ex.fetch_order(str(leg["orderId"]), symbol)

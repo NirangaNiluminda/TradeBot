@@ -49,6 +49,7 @@ from tradebot.domain.risk import (
     PositionSize,
     RiskManager,
     RiskRule,
+    StopOnlyExit,
 )
 from tradebot.domain.strategies import Strategy, strategy_factory
 from tradebot.domain.timeframes import timeframe_delta
@@ -80,6 +81,8 @@ def build_exit_levels(risk: RiskConfig) -> RiskRule:
     percent = PercentExitLevels(risk.stop_loss_pct, risk.take_profit_pct)
     if risk.exit_mode == "percent":
         return percent
+    if risk.exit_mode == "stop_only":
+        return StopOnlyExit(risk.stop_loss_pct)
     return AtrExitLevels(
         risk.stop_atr_mult, risk.take_profit_atr_mult, risk.min_stop_pct, risk.max_stop_pct, percent
     )
@@ -91,7 +94,11 @@ def build_risk_manager(risk: RiskConfig) -> RiskManager:
         [
             DailyLossLimit(risk.daily_loss_limit_pct),
             MaxOpenPositions(risk.max_open_positions),
-            PositionSize(risk.budget_usdt, risk.position_size_pct),
+            PositionSize(
+                risk.budget_usdt,
+                risk.position_size_pct,
+                slots=risk.max_open_positions if risk.split_budget else 1,
+            ),
             build_exit_levels(risk),
             NewsRisk(risk.caution_size_mult, risk.caution_stop_mult),
             MinOrderSize(),
@@ -300,7 +307,7 @@ class LiveApp:
 
 
 def database_path(cfg: AppConfig, mode: str) -> Path:
-    return cfg.data.resolved() / f"tradebot_{mode}.sqlite"
+    return cfg.data.resolved() / (cfg.data.database or f"tradebot_{mode}.sqlite")
 
 
 def build_exchange(cfg: AppConfig, secrets: Secrets, mode: str) -> CcxtExchange:
@@ -364,7 +371,7 @@ async def build_live_app(
     telegram_client = None
     if tg := telegram_settings(secrets):
         telegram_client = TelegramClient(tg[0], http)
-        notifiers = [*notifiers, TelegramNotifier(telegram_client, tg[1])]
+        notifiers = [*notifiers, TelegramNotifier(telegram_client, tg[1], cfg.telegram.label)]
     EventNotifier(bus, notifiers, verbose=verbose)
 
     news = build_news_risk(cfg, secrets, http, bus) if cfg.news.enabled else None
@@ -407,7 +414,7 @@ async def build_live_app(
         )
     telegram = (
         TelegramController(telegram_client, tg[1], facade, control, bus)
-        if telegram_client and tg
+        if telegram_client and tg and cfg.telegram.commands
         else None
     )
     return LiveApp(

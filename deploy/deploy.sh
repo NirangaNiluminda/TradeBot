@@ -18,7 +18,9 @@ rsync -az --chmod=F600 .env "$HOST:tradebot/.env"
 
 echo "→ installing packages and the service"
 ssh "$HOST" 'cd ~/tradebot && ~/.local/bin/uv sync --frozen --no-dev -q \
-  && sudo cp deploy/tradebot.service /etc/systemd/system/tradebot.service \
-  && sudo systemctl daemon-reload && sudo systemctl enable tradebot -q'
+  && sudo cp deploy/tradebot.service deploy/tradebot-trend.service /etc/systemd/system/ \
+  && sudo systemctl daemon-reload && sudo systemctl enable tradebot tradebot-trend -q'
 
-echo "✓ deployed. (Re)start with:  ssh $HOST sudo systemctl restart tradebot"
+echo "✓ deployed. Running bots are NOT restarted. (Re)start one with:"
+echo "    ssh $HOST sudo systemctl restart tradebot         # main bot"
+echo "    ssh $HOST sudo systemctl restart tradebot-trend   # trend bot"

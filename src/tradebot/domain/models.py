@@ -111,6 +111,13 @@ class Fill:
         return self.amount * self.price
 
 
+def target_text(take_profit: float, reference: float) -> str:
+    """Human text for a take-profit, which may be 'none' (trend strategies let winners run)."""
+    if not math.isfinite(take_profit):
+        return "no target (exits on the trend signal)"
+    return f"{take_profit:,.2f} ({(take_profit / reference - 1) * 100:+.1f}%)"
+
+
 @dataclass(slots=True)
 class Position:
     """A coin we currently hold, plus its safety exits."""

@@ -1,0 +1,19 @@
+# Second bot: ensemble trend following on daily candles (config/trend.yaml).
+# Runs alongside tradebot.service; own database, dashboard port 8001, [TREND] alerts.
+[Unit]
+Description=tradebot-trend (ensemble trend following, paper)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tradebot
+Environment=PYTHONUNBUFFERED=1 COLUMNS=120 TERM=dumb
+ExecStart=/home/ubuntu/.local/bin/uv run --frozen --no-dev tradebot run --mode paper --start --quiet -c config/trend.yaml
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

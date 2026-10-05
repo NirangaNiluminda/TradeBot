@@ -20,6 +20,7 @@ from tradebot.application.approvals import ApprovalRequested, ApprovalResolved
 from tradebot.application.bot_control import BotControl
 from tradebot.application.bot_facade import BotFacade
 from tradebot.application.event_bus import EventBus
+from tradebot.domain.models import target_text
 
 log = logging.getLogger(__name__)
 
@@ -55,11 +56,12 @@ class TelegramClient:
 class TelegramNotifier:
     """NotifierPort: send a text message to your chat."""
 
-    def __init__(self, client: TelegramClient, chat_id: str) -> None:
+    def __init__(self, client: TelegramClient, chat_id: str, label: str = "") -> None:
         self.client, self.chat_id = client, chat_id
+        self.prefix = f"[{label}] " if label else ""  # tells two bots' messages apart
 
     async def send(self, text: str) -> None:
-        await self.client.call("sendMessage", chat_id=self.chat_id, text=text)
+        await self.client.call("sendMessage", chat_id=self.chat_id, text=self.prefix + text)
 
 
 class TelegramController:
@@ -161,7 +163,7 @@ class TelegramController:
             f"⏳ Approve BUY {p.symbol}?\n"
             f"≈ ${p.quote_amount:.2f} at ~{p.price:,.2f}\n"
             f"Stop {p.stop_loss:,.2f} ({(p.stop_loss / p.price - 1) * 100:+.1f}%) · "
-            f"Target {p.take_profit:,.2f} ({(p.take_profit / p.price - 1) * 100:+.1f}%)\n"
+            f"Target {target_text(p.take_profit, p.price)}\n"
             f"Why: {r.reason}\n"
             f"Expires {r.expires:%H:%M} UTC"
         )

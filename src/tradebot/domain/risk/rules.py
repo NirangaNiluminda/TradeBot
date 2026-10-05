@@ -71,12 +71,15 @@ class MaxOpenPositions(RiskRule):
 class PositionSize(RiskRule):
     """Decide how many USDT to spend: a % of what's left of the trading budget."""
 
-    def __init__(self, budget_quote: float, size_pct: float) -> None:
-        self.budget_quote, self.size_pct = budget_quote, size_pct
+    def __init__(self, budget_quote: float, size_pct: float, slots: int = 1) -> None:
+        # slots > 1: the budget is split in equal parts, one per position (multi-coin bots)
+        self.budget_quote, self.size_pct, self.slots = budget_quote, size_pct, max(1, slots)
 
     def apply(self, proposal: TradeProposal, ctx: RiskContext) -> None:
         p = ctx.portfolio
         available = min(p.free_quote, self.budget_quote - p.invested_quote)
+        if self.slots > 1:
+            available = min(available, self.budget_quote / self.slots)
         if available <= 0:
             raise Rejected("trading budget fully used")
         proposal.quote_amount = available * self.size_pct / 100
@@ -94,6 +97,21 @@ class PercentExitLevels(RiskRule):
     def apply(self, proposal: TradeProposal, ctx: RiskContext) -> None:
         proposal.stop_loss = proposal.price * (1 - self.stop_loss_pct / 100)
         proposal.take_profit = proposal.price * (1 + self.take_profit_pct / 100)
+
+
+class StopOnlyExit(RiskRule):
+    """A wide safety stop-loss and NO take-profit: the strategy decides when to sell.
+
+    For trend following, where capping winners would cut off the big trends.
+    """
+
+    def __init__(self, stop_loss_pct: float) -> None:
+        self.stop_loss_pct = stop_loss_pct
+
+    def apply(self, proposal: TradeProposal, ctx: RiskContext) -> None:
+        proposal.stop_loss = proposal.price * (1 - self.stop_loss_pct / 100)
+        proposal.take_profit = math.inf
+        proposal.notes.append(f"safety stop -{self.stop_loss_pct}%, no take-profit")
 
 
 class AtrExitLevels(RiskRule):

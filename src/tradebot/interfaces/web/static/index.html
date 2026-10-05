@@ -364,13 +364,13 @@ function drawPositionLines() {
     const r = original();
     if (!p || !r) return r;
     return { priceRange: { minValue: Math.min(r.priceRange.minValue, p.stop_loss),
-                           maxValue: Math.max(r.priceRange.maxValue, p.take_profit) } };
+                           maxValue: Math.max(r.priceRange.maxValue, p.take_profit ?? 0) } };
   } });
   if (!p) return;
   const line = (price, color, title, style) => priceLines.push(series.createPriceLine({ price, color, title, lineWidth: 2, lineStyle: style, axisLabelVisible: true }));
   line(p.entry_price, css("--text-secondary"), "entry", LightweightCharts.LineStyle.Dashed);
   line(p.stop_loss, css("--critical"), "stop-loss", LightweightCharts.LineStyle.Solid);
-  line(p.take_profit, css("--good"), "target", LightweightCharts.LineStyle.Solid);
+  if (p.take_profit != null) line(p.take_profit, css("--good"), "target", LightweightCharts.LineStyle.Solid);
 }
 
 async function refresh() {

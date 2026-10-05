@@ -92,3 +92,18 @@ def test_atr_missing_falls_back_to_percent(btc_rules):
     m = build_risk_manager(RiskConfig(stop_loss_pct=5, take_profit_pct=10))
     d = m.evaluate(TradeProposal("BTC/USDT", price=100_000), ctx(btc_rules))  # atr = NaN
     assert d.proposal.stop_loss == pytest.approx(95_000)
+
+
+def test_stop_only_exit_has_no_take_profit(btc_rules):
+    import math
+
+    m = build_risk_manager(RiskConfig(exit_mode="stop_only", stop_loss_pct=15))
+    d = m.evaluate(TradeProposal("BTC/USDT", price=100_000), ctx(btc_rules))
+    assert d.proposal.stop_loss == pytest.approx(85_000) and math.isinf(d.proposal.take_profit)
+
+
+def test_split_budget_gives_each_coin_its_share(btc_rules):
+    m = build_risk_manager(RiskConfig(budget_usdt=50, max_open_positions=5, split_budget=True))
+    d = m.evaluate(TradeProposal("BTC/USDT", 100_000), ctx(btc_rules, equity=50, day_start=50,
+                                                           free=50))  # fmt: skip
+    assert d.proposal.quote_amount == pytest.approx(9.5)  # 95% of 50 / 5

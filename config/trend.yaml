@@ -1,0 +1,99 @@
+# ─────────────────────────────────────────────────────────────
+#  tradebot — SECOND bot: ensemble trend following (daily candles)
+#  Runs next to the main bot:  tradebot run -c config/trend.yaml
+#  Own database, own dashboard port, Telegram messages labelled [TREND].
+# ─────────────────────────────────────────────────────────────
+
+exchange:
+  name: binance
+  mode: backtest          # backtest | testnet | live   (testnet/live come in Phase 3)
+  quote_asset: USDT
+
+market:
+  symbols: [BTC/USDT, ETH/USDT, SOL/USDT, BNB/USDT, XRP/USDT]
+  timeframe: 1d            # the method is designed for DAILY candles
+
+# Which strategy to use. See all with:  uv run tradebot strategies
+# Chosen with `uv run tradebot optimize` (walk-forward test on unseen data, 2026-10-02):
+# breakout was the only strategy profitable in all three honest tests
+# (BTC/ETH 3y, BTC/ETH 5y, unseen coins SOL/BNB/XRP), profit factor ~1.2-1.3.
+# Re-run `tradebot optimize` every few months to check it still holds.
+strategy:
+  # Zarattini, Pagani & Barbon (2025) "Catching Crypto Trends", small-account version.
+  # Unseen-data test (Apr 2025 -> Oct 2026, 5 coins, fees): +10%, worst drop -17%, PF 1.38.
+  name: trend_ensemble
+  params:
+    min_votes: 5            # hold while >= 5 of 9 trend voters (5..360 days) agree
+
+risk:
+  budget_usdt: 50           # paper budget: $10 per coin (Binance minimum order is $5)
+  max_open_positions: 5     # one position per coin
+  split_budget: true        # each position gets budget / 5
+  position_size_pct: 95
+  exit_mode: stop_only      # NO take-profit: winners run until the trend voters exit
+  stop_loss_pct: 15         # wide safety stop for crashes between daily candles
+  daily_loss_limit_pct: 10
+  caution_size_mult: 0.5
+  caution_stop_mult: 0.75
+  # unused in stop_only mode, kept for completeness
+  take_profit_pct: 10
+  stop_atr_mult: 2.5
+  take_profit_atr_mult: 6.25
+  min_stop_pct: 1
+  max_stop_pct: 10
+
+backtest:
+  days: 365                 # test on the last N days
+  # start: 2024-01-01       # or a fixed period (overrides days)
+  # end: 2025-01-01
+  starting_balance: 10
+  fee_pct: 0.1              # Binance spot fee per order
+  slippage_pct: 0.05        # extra price disadvantage on market orders
+
+data:
+  dir: data
+  database: tradebot_trend_paper.sqlite   # separate from the main bot's database
+
+# ── News + LLM risk gate (Phase 2) ──────────────────────────────
+news:
+  enabled: true
+  refresh_minutes: 20       # how often to re-read the news
+  lookback_hours: 12        # only headlines from the last 12 hours
+  max_headlines: 40
+  stale_after_minutes: 90   # older analysis is ignored -> fail-safe level
+  fail_safe_level: CAUTION  # used when news/LLM is unavailable (be careful, not blind)
+  calm_down_checks: 3       # risk goes UP at once, DOWN only after 3 calmer checks (~1 hour)
+  fear_greed: true
+  rss_feeds:
+    coindesk: https://www.coindesk.com/arc/outboundfeeds/rss/
+    cointelegraph: https://cointelegraph.com/rss
+    decrypt: https://decrypt.co/feed
+
+llm:
+  # Order = fallback order. Switching provider = editing this line.
+  # Available: gemini, groq, openai, openrouter (keys go in .env, e.g. GROQ_API_KEY)
+  providers: [groq, gemini]   # Groq first: Gemini's free daily quota runs out quickly
+  models:
+    gemini: gemini-3.5-flash
+    groq: openai/gpt-oss-120b
+  timeout_seconds: 60
+  min_interval_seconds: 5   # pause between calls to stay inside free-tier limits
+  cache_minutes: 10         # same headlines within 10 min -> reuse the answer
+
+# ── Live trading (Phase 3-4) ────────────────────────────────────
+trading:
+  auto_start: true              # server bot: trade without waiting for Start
+  loop: true                    # true = after each trade, look for the next one by itself
+                                # false = do ONE trade, then pause until you press Start again
+  explain: false                # true = LLM explains analyses and trades in simple words
+  manual_approval: false        # true = every buy waits for your OK (Telegram / dashboard)
+  approval_timeout_minutes: 15  # unanswered requests expire (prices move)
+
+dashboard:
+  enabled: true
+  host: 127.0.0.1               # localhost only. Don't change unless you add a password.
+  port: 8001                    # main bot uses 8000
+
+telegram:
+  commands: false               # the main bot receives /commands; this one only sends alerts
+  label: TREND                  # messages start with [TREND]

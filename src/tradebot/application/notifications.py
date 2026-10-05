@@ -19,6 +19,7 @@ from tradebot.domain.events import (
     SignalGenerated,
     TradeRejected,
 )
+from tradebot.domain.models import target_text
 from tradebot.domain.ports import NotifierPort
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ def describe_opened(e: PositionOpened) -> str:
         f"🟢 BOUGHT {p.symbol}\n"
         f"{p.amount:g} @ {p.entry_price:,.2f} (≈ ${p.cost:.2f})\n"
         f"Stop-loss {p.stop_loss:,.2f} ({(p.stop_loss / p.entry_price - 1) * 100:+.1f}%) · "
-        f"Target {p.take_profit:,.2f} ({(p.take_profit / p.entry_price - 1) * 100:+.1f}%)"
+        f"Target {target_text(p.take_profit, p.entry_price)}"
     )
 
 

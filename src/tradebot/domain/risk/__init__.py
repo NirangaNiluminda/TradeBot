@@ -10,6 +10,7 @@ from tradebot.domain.risk.rules import (
     PositionSize,
     RiskContext,
     RiskRule,
+    StopOnlyExit,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "RiskDecision",
     "RiskManager",
     "RiskRule",
+    "StopOnlyExit",
 ]
