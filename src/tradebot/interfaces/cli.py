@@ -54,6 +54,8 @@ from tradebot.domain.strategies import strategy_factory
 from tradebot.infrastructure.notify.console import ConsoleNotifier
 from tradebot.infrastructure.notify.telegram import TelegramClient, find_chat_ids
 from tradebot.infrastructure.persistence.sqlite_repository import SqliteTradeRepository
+from tradebot.research.run import run_research
+from tradebot.research.run import save as save_research
 
 app = typer.Typer(
     help="Binance trading bot — backtesting and (soon) live trading.", no_args_is_help=True
@@ -415,6 +417,47 @@ def grid_backtest(
         "price fell below the ladder. Coins still held at the end of a step are valued at the "
         "last price.[/]"
     )
+
+
+@app.command()
+def research(
+    symbols: SymbolsOpt = None,
+    days: Annotated[int, typer.Option("--days", "-d", help="History (5-minute candles)")] = 730,
+    config: ConfigOpt = None,
+) -> None:
+    """Step 1 research: time-of-day effects, fee hurdle, short-term pattern scan."""
+    cfg = _load(config, None, symbols, None)
+    if not symbols:
+        cfg.market.symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+
+    async def load() -> dict:
+        market_data, client = bootstrap.build_market_data(cfg)
+        try:
+            return {
+                s: await market_data.fetch_candles(s, "5m", start, end) for s in cfg.market.symbols
+            }
+        finally:
+            await client.close()
+
+    with console.status("Loading 5-minute candles (first run downloads a lot)..."):
+        candles = asyncio.run(load())
+    with console.status("Analysing..."):
+        result = run_research(candles)
+    path = save_research(result, cfg.data.resolved() / "research" / "step1.json")
+    for symbol, coin in result["coins"].items():
+        found = coin["confirmed"]
+        console.print(
+            f"[bold]{symbol}[/]: {coin['candles']:,} candles — {len(found)} pattern(s) "
+            "held up in BOTH periods"
+        )
+        for row in found[:5]:
+            console.print(
+                f"   {row['pattern']} → {row['horizon']}: net {row['mean_net_pct_disc']:+.3f}% / "
+                f"{row['mean_net_pct_conf']:+.3f}% (n={row['n_disc']}/{row['n_conf']})"
+            )
+    console.print(f"Full results: {path}")
 
 
 @app.command()

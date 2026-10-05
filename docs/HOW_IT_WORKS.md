@@ -108,6 +108,14 @@ option still exists (`late_entry_window` in strategy params) for your own experi
 - A "fast" grid that trades ~10 times a day (±2%, 16 levels): BTC **−80%**, ETH **−94%** in a
   year. Even with zero fees it lost 36–57%: grids keep buying on the way down.
 
+**Step 1 short-term research (2026-10-05, `tradebot research`, report in
+`docs/research/step1-report.html`).** Two years of 5-minute data, 5 coins, older vs newer period:
+- 0 of 135 pattern tests held up after fees; the best older-data patterns all turned negative.
+- No entry hour + holding time (288 combinations per coin) made money in the newer period.
+- In 15 minutes BTC typically moves 0.10%, half the 0.2% fee.
+- Reliable but directionless: the busiest hours are 18:30–21:30 Sri Lanka time (US open).
+Decision: no short-term AI model; keep the 4-hour breakout bot.
+
 **Common traps:**
 - **Overfitting:** tweaking settings until the past looks perfect. The future won't match.
   Always check results on a *different* period (e.g. `--days 730` vs `--days 365`).
