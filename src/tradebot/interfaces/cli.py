@@ -635,10 +635,13 @@ def _print_banner(cfg: AppConfig, mode: str, live: bootstrap.LiveApp, dashboard:
         )
     if dashboard:
         console.print(f"Dashboard: [bold]http://{cfg.dashboard.host}:{cfg.dashboard.port}[/]")
-    console.print(
-        "Telegram: "
-        + ("connected" if live.telegram else "[dim]off (set TELEGRAM_BOT_TOKEN + _CHAT_ID)[/]")
-    )
+    if live.telegram:
+        tg = "connected (alerts + commands)"
+    elif bootstrap.telegram_settings(Secrets()):
+        tg = "alerts only (commands go to the main bot)"
+    else:
+        tg = "[dim]off (set TELEGRAM_BOT_TOKEN + _CHAT_ID)[/]"
+    console.print(f"Telegram: {tg}")
     console.print(
         f"[dim]Checking for closed {cfg.market.timeframe} candles every 20s. Ctrl+C to stop.[/]"
     )

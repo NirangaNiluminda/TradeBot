@@ -9,6 +9,16 @@ Your laptop can be off. You follow it on **Telegram** and, when you want, on the
 > stop-loss, while the real BTC price never came close. Paper mode checks every
 > stop-loss and target against REAL 1-minute prices.
 
+## Two bots
+
+| Bot | Service | Strategy | Dashboard (via tunnel) | Telegram |
+|---|---|---|---|---|
+| Main | `tradebot` | breakout, 4h, BTC+ETH, $10 | `ssh -N -L 8001:127.0.0.1:8000 tradebot` | alerts + commands |
+| Trend | `tradebot-trend` | trend_ensemble, daily, 5 coins, $50 | `ssh -N -L 8002:127.0.0.1:8001 tradebot` → http://127.0.0.1:8002 | alerts labelled [TREND] |
+
+For the trend bot, add `-c config/trend.yaml` to `status` / `trades` commands, and use
+`journalctl -u tradebot-trend` for its log. `deploy/deploy.sh` never restarts a running bot.
+
 ## Everyday commands (from your laptop)
 
 | What | Command |
