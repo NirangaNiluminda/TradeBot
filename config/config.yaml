@@ -64,6 +64,7 @@ news:
   max_headlines: 40
   stale_after_minutes: 90   # older analysis is ignored -> fail-safe level
   fail_safe_level: CAUTION  # used when news/LLM is unavailable (be careful, not blind)
+  calm_down_checks: 3       # risk goes UP at once, DOWN only after 3 calmer checks (~1 hour)
   fear_greed: true
   rss_feeds:
     coindesk: https://www.coindesk.com/arc/outboundfeeds/rss/
@@ -73,7 +74,7 @@ news:
 llm:
   # Order = fallback order. Switching provider = editing this line.
   # Available: gemini, groq, openai, openrouter (keys go in .env, e.g. GROQ_API_KEY)
-  providers: [gemini, groq]
+  providers: [groq, gemini]   # Groq first: Gemini's free daily quota runs out quickly
   models:
     gemini: gemini-3.5-flash
     groq: openai/gpt-oss-120b

@@ -127,6 +127,7 @@ def build_news_risk(
         max_headlines=n.max_headlines,
         stale_after_minutes=n.stale_after_minutes,
         fail_safe_level=RiskLevel(n.fail_safe_level),
+        calm_down_checks=n.calm_down_checks,
     )
 
 

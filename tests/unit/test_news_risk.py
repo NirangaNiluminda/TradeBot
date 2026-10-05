@@ -105,6 +105,7 @@ async def test_risk_change_is_published_once():
     bus, seen = EventBus(), []
     bus.subscribe(RiskChanged, seen.append)
     svc = service(FakeLLM([verdict("NORMAL"), verdict("NORMAL"), verdict("DANGER")]), bus=bus)
+    svc.calm_down_checks = 1
     for _ in range(3):
         await svc.refresh()
     # starts at CAUTION (fail-safe) -> NORMAL -> NORMAL (no event) -> DANGER
@@ -177,3 +178,12 @@ def test_rss_parsing():
     [item] = parse_feed(xml, "src")
     assert item.title == "BTC & ETH rally" and item.summary == "Prices up"
     assert item.published == datetime(2026, 10, 2, 10, tzinfo=UTC)
+
+
+async def test_risk_rises_at_once_but_falls_only_after_calm_checks():
+    answers = [verdict("NORMAL"), verdict("CAUTION"), verdict("NORMAL"), verdict("CAUTION"),
+               verdict("NORMAL"), verdict("NORMAL"), verdict("NORMAL")]  # fmt: skip
+    svc = service(FakeLLM(answers))
+    levels = [(await svc.refresh()).level.value for _ in answers]
+    # flip-flop is ignored; NORMAL only after 3 calm readings in a row
+    assert levels == ["NORMAL", "CAUTION", "CAUTION", "CAUTION", "CAUTION", "CAUTION", "NORMAL"]

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -27,6 +28,7 @@ from tradebot.domain.models import NewsItem, RiskAssessment, RiskLevel
 from tradebot.domain.ports import LLMError, LLMPort, NewsSourcePort
 
 log = logging.getLogger(__name__)
+_SEVERITY = {RiskLevel.NORMAL: 0, RiskLevel.CAUTION: 1, RiskLevel.DANGER: 2}
 
 SYSTEM_PROMPT = """\
 You are the risk officer of a small, conservative crypto SPOT trading bot (no leverage).
@@ -78,6 +80,7 @@ class NewsRiskService:
         stale_after_minutes: float = 90,
         fail_safe_level: RiskLevel = RiskLevel.CAUTION,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        calm_down_checks: int = 3,
     ) -> None:
         self.sources, self.llm, self.bus, self.coins = sources, llm, bus, coins
         self.lookback = timedelta(hours=lookback_hours)
@@ -87,6 +90,10 @@ class NewsRiskService:
         self.clock = clock
         self.last_headlines: list[NewsItem] = []
         self._last_good: RiskAssessment | None = None
+        # Risk goes UP immediately, but DOWN only after this many calmer checks in a row.
+        # Stops NORMAL <-> CAUTION flipping on borderline news every 20 minutes.
+        self.calm_down_checks = max(1, calm_down_checks)
+        self._calmer_in_a_row = 0
         self._published = RiskAssessment(fail_safe_level, "starting up", source="fail-safe")
 
     # ------------------------------------------------------------------ MarketRiskPort
@@ -106,12 +113,26 @@ class NewsRiskService:
             log.warning("No headlines from any news source")
         else:
             try:
-                self._last_good = await self._ask_llm(news)
+                self._last_good = self._smooth(await self._ask_llm(news))
             except (LLMError, ValidationError) as exc:
                 log.warning("News risk analysis failed: %s", exc)
         assessment = self.current()
         self._publish_if_changed(assessment)
         return assessment
+
+    def _smooth(self, fresh: RiskAssessment) -> RiskAssessment:
+        prev = self._last_good
+        if prev is None or _SEVERITY[fresh.level] >= _SEVERITY[prev.level]:
+            self._calmer_in_a_row = 0
+            return fresh  # same or riskier: accept at once (safe direction)
+        self._calmer_in_a_row += 1
+        if self._calmer_in_a_row >= self.calm_down_checks:
+            self._calmer_in_a_row = 0
+            return fresh
+        # Calmer, but not for long enough yet: keep the previous level, refresh the time.
+        waiting = f" (calmer news {self._calmer_in_a_row}/{self.calm_down_checks} checks)"
+        return replace(prev, reason=prev.reason.split(" (calmer news")[0] + waiting,
+                       time=fresh.time, source=fresh.source)  # fmt: skip
 
     async def collect_news(self) -> list[NewsItem]:
         results = await asyncio.gather(*(s.fetch() for s in self.sources), return_exceptions=True)

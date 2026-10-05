@@ -73,6 +73,7 @@ class NewsConfig(BaseModel):
     max_headlines: int = Field(40, ge=5, le=100)
     stale_after_minutes: float = Field(90, gt=0)
     fail_safe_level: Literal["NORMAL", "CAUTION", "DANGER"] = "CAUTION"
+    calm_down_checks: int = Field(3, ge=1)  # calmer readings in a row needed to lower the level
     fear_greed: bool = True
     rss_feeds: dict[str, str] = Field(
         default_factory=lambda: {
@@ -84,7 +85,7 @@ class NewsConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    providers: list[str] = ["gemini", "groq"]  # order = fallback order
+    providers: list[str] = ["groq", "gemini"]  # order = fallback order
     models: dict[str, str] = Field(
         default_factory=lambda: {
             "gemini": "gemini-3.5-flash",
